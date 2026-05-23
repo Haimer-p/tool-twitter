@@ -153,18 +153,36 @@ class EngagementBot {
   async retweet(page, tweetUrl, meta) {
     try {
       await page.goto(tweetUrl, { waitUntil: 'domcontentloaded' });
-      await this.randomDelay(2000, 3000);
+      await this.randomDelay(
+        this.config.delays.pageLoad?.min || 3000,
+        this.config.delays.pageLoad?.max || 6000
+      );
+
+      const alreadyRetweeted = await page.$('[data-testid="unretweet"]');
+      if (alreadyRetweeted) {
+        logger.info(`Already retweeted: ${tweetUrl}`);
+        return false;
+      }
 
       const retweetButton = await page.$(SELECTORS.retweet);
-      if (!retweetButton) return false;
+      if (!retweetButton) {
+        logger.warn(`Retweet button not found: ${tweetUrl}`);
+        return false;
+      }
 
       await retweetButton.click();
-      await this.randomDelay(500, 1000);
+      await this.randomDelay(1000, 2000);
 
-      const confirmButton = await page.$(SELECTORS.retweetConfirm);
-      if (!confirmButton) return false;
+      const confirmButton =
+        (await page.$(SELECTORS.retweetConfirm)) ||
+        (await page.$('[data-testid="retweetConfirm"]'));
+      if (!confirmButton) {
+        logger.warn(`Retweet confirm not found: ${tweetUrl}`);
+        return false;
+      }
 
       await confirmButton.click();
+      await this.randomDelay(1500, 2500);
       logger.info(`Retweeted: ${tweetUrl}`);
 
       return await this.recordInteraction({
@@ -185,7 +203,11 @@ class EngagementBot {
   async replyToTweet(page, tweetUrl, replyText, meta) {
     try {
       await page.goto(tweetUrl, { waitUntil: 'domcontentloaded' });
-      await this.randomDelay(2000, 4000);
+      await this.randomDelay(
+        this.config.delays.pageLoad?.min || 3000,
+        this.config.delays.pageLoad?.max || 6000
+      );
+      logger.info(`AI reply: "${replyText.substring(0, 80)}..."`);
 
       const replyButton = await page.$(SELECTORS.reply);
       if (!replyButton) return false;
@@ -361,8 +383,13 @@ class EngagementBot {
       await this.randomDelay(3000, 5000);
 
       let interactionsThisRun = 0;
+      const keywordsPerRun =
+        this.config.interactions.keywordsPerRun || 6;
+      const tweetsPerKeyword =
+        this.config.interactions.tweetsPerKeyword || 8;
       const shuffledKeywords = [...keywords].sort(() => Math.random() - 0.5);
-      const selectedKeywords = shuffledKeywords.slice(0, 3);
+      const selectedKeywords = shuffledKeywords.slice(0, keywordsPerRun);
+      logger.info(`Keywords this run: ${selectedKeywords.join(', ')}`);
 
       for (const keyword of selectedKeywords) {
         if (!this.isRunning) break;
@@ -371,7 +398,7 @@ class EngagementBot {
         const tweetUrls = await this.searchTweets(page, keyword);
         logger.info(`Found ${tweetUrls.length} tweets for "${keyword}"`);
 
-        for (const tweetUrl of tweetUrls.slice(0, 10)) {
+        for (const tweetUrl of tweetUrls.slice(0, tweetsPerKeyword)) {
           if (!this.isRunning) break;
           if (interactionsThisRun >= this.config.interactions.maxPerAccountPerRun) break;
 
@@ -397,6 +424,7 @@ class EngagementBot {
           };
 
           const action = this.decideAction();
+          logger.info(`Action "${action}" → ${tweetUrl.substring(0, 70)}...`);
           let success = false;
 
           switch (action) {

@@ -1,0 +1,6 @@
+{
+  "watch": ["src", "config.js"],
+  "ext": "js,json",
+  "ignore": ["accounts/**", "logs/**", "node_modules/**", "public/**", ".env"],
+  "delay": 500
+}

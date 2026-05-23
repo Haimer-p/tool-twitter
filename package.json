@@ -6,6 +6,9 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
+    "kill-ports": "powershell -ExecutionPolicy Bypass -File scripts/kill-ports.ps1",
+    "repair-stats": "node scripts/repair-stats.js",
+    "check-stats": "node scripts/check-stats.js",
     "verify": "node scripts/verify.js",
     "test": "node scripts/test-unit.js"
   },

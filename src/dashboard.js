@@ -138,7 +138,18 @@ class Dashboard {
       }
     }, 10000);
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      this.server.once('error', (err) => {
+        if (err.code === 'EADDRINUSE') {
+          reject(
+            new Error(
+              `Port ${port} dang duoc dung. Dong process cu (netstat -ano | findstr :${port}) hoac doi DASHBOARD_PORT trong .env`
+            )
+          );
+        } else {
+          reject(err);
+        }
+      });
       this.server.listen(port, () => {
         logger.info(`Dashboard: http://localhost:${port}`);
         resolve();

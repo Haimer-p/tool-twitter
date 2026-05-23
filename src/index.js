@@ -1,4 +1,8 @@
 require('dotenv').config();
+const dns = require('node:dns');
+
+// Node 22 + Windows: tranh loi SSL/TLS khi ket noi MongoDB Atlas
+dns.setDefaultResultOrder('ipv4first');
 const path = require('path');
 const readline = require('readline');
 const cron = require('node-cron');

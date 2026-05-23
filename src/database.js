@@ -73,6 +73,13 @@ const FollowedUser = mongoose.model('FollowedUser', followedUserSchema);
 const DailyStats = mongoose.model('DailyStats', dailyStatsSchema);
 const ActivityLog = mongoose.model('ActivityLog', activityLogSchema);
 
+const STAT_FIELD = {
+  like: 'likes',
+  retweet: 'retweets',
+  reply: 'replies',
+  follow: 'follows',
+};
+
 class Database {
   constructor(uri) {
     this.uri = uri;
@@ -80,9 +87,32 @@ class Database {
   }
 
   async connect() {
-    await mongoose.connect(this.uri);
-    this.connected = true;
-    logger.info('MongoDB connected successfully');
+    const options = {
+      autoSelectFamily: false,
+      serverSelectionTimeoutMS: 15000,
+      socketTimeoutMS: 45000,
+    };
+
+    let lastError;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await mongoose.connect(this.uri, options);
+        this.connected = true;
+        logger.info('MongoDB connected successfully');
+        return;
+      } catch (error) {
+        lastError = error;
+        logger.warn(`MongoDB connect attempt ${attempt}/3 failed: ${error.message}`);
+        if (attempt < 3) {
+          await new Promise((r) => setTimeout(r, 2000 * attempt));
+        }
+      }
+    }
+
+    const hint =
+      'Kiem tra: (1) IP da whitelist tren Atlas Network Access, (2) MONGODB_URI dung user/password, (3) cluster dang chay.';
+    logger.error(`${hint} Chi tiet: ${lastError.message}`);
+    throw lastError;
   }
 
   async disconnect() {
@@ -147,13 +177,16 @@ class Database {
 
   async updateDailyStats(accountName, interactionType) {
     const today = new Date().toISOString().split('T')[0];
+    const field = STAT_FIELD[interactionType];
+    if (!field) return null;
+
     let stats = await DailyStats.findOne({ date: today });
     if (!stats) {
       stats = new DailyStats({ date: today });
     }
 
     stats.totalInteractions += 1;
-    stats[interactionType] = (stats[interactionType] || 0) + 1;
+    stats[field] = (stats[field] || 0) + 1;
 
     if (!stats.byAccount.has(accountName)) {
       stats.byAccount.set(accountName, {
@@ -167,9 +200,10 @@ class Database {
 
     const accountStats = stats.byAccount.get(accountName);
     accountStats.interactions += 1;
-    accountStats[interactionType] = (accountStats[interactionType] || 0) + 1;
+    accountStats[field] = (accountStats[field] || 0) + 1;
     stats.byAccount.set(accountName, accountStats);
 
+    stats.markModified('byAccount');
     await stats.save();
     return stats;
   }
@@ -182,9 +216,9 @@ class Database {
       if (endDate) query.date.$lte = endDate;
     }
 
-    const stats = await DailyStats.find(query).sort({ date: -1 }).limit(30);
+    const stats = await DailyStats.find(query).sort({ date: -1 }).limit(30).lean();
 
-    const totals = await DailyStats.aggregate([
+    let totals = await DailyStats.aggregate([
       { $match: query },
       {
         $group: {
@@ -198,16 +232,54 @@ class Database {
       },
     ]);
 
-    return {
-      stats,
-      totals: totals[0] || {
-        totalInteractions: 0,
-        likes: 0,
-        retweets: 0,
-        replies: 0,
-        follows: 0,
-      },
+    totals = totals[0] || {
+      totalInteractions: 0,
+      likes: 0,
+      retweets: 0,
+      replies: 0,
+      follows: 0,
     };
+
+    if (
+      totals.totalInteractions > 0 &&
+      totals.likes + totals.retweets + totals.replies + totals.follows === 0
+    ) {
+      const fromLogs = await this.getTotalsFromActivityLogs();
+      if (fromLogs.totalInteractions > 0) totals = fromLogs;
+    } else if (totals.totalInteractions === 0) {
+      const fromLogs = await this.getTotalsFromActivityLogs();
+      if (fromLogs.totalInteractions > 0) totals = fromLogs;
+    }
+
+    return { stats, totals };
+  }
+
+  async getTotalsFromActivityLogs() {
+    const rows = await ActivityLog.aggregate([
+      {
+        $match: {
+          success: true,
+          action: { $in: ['like', 'retweet', 'reply', 'follow'] },
+        },
+      },
+      { $group: { _id: '$action', count: { $sum: 1 } } },
+    ]);
+
+    const totals = {
+      totalInteractions: 0,
+      likes: 0,
+      retweets: 0,
+      replies: 0,
+      follows: 0,
+    };
+    for (const row of rows) {
+      const field = STAT_FIELD[row._id];
+      if (field) {
+        totals[field] = row.count;
+        totals.totalInteractions += row.count;
+      }
+    }
+    return totals;
   }
 
   async logActivity(data) {

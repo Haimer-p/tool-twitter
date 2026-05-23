@@ -72,9 +72,11 @@
       <p>Giám sát và điều khiển bot tương tác Twitter/X</p>
       <div class="auth-box" id="authBox">
         <input type="text" id="authUser" placeholder="Username" value="admin">
-        <input type="password" id="authPass" placeholder="Password">
-        <button class="btn btn-start" onclick="saveAuth()">Lưu đăng nhập</button>
+        <input type="password" id="authPass" placeholder="Password" value="admin123">
+        <button class="btn btn-start" onclick="saveAuth()">Lưu đăng nhập & tải dữ liệu</button>
+        <button class="btn btn-stop" style="background:#3498db" onclick="initialFetch()">Làm mới</button>
       </div>
+      <p style="color:#888;font-size:13px;margin-top:8px">Bấm nút xanh. Port theo .env (vd: http://localhost:3001).</p>
     </div>
 
     <div class="stats-grid">

@@ -14,20 +14,20 @@ class AIService {
 
   async generateReply(tweetText, tweetAuthor, context = '') {
     const prompt = `
-You are a Twitter user active in Web3/Crypto.
-Write a natural, friendly reply to this tweet:
+You are a crypto Twitter user. Write a short, natural comment/reply on this tweet.
 
 Tweet from @${tweetAuthor}: "${tweetText}"
-${context ? `Extra context: ${context}` : ''}
+${context ? `Context: ${context}` : ''}
 
-Requirements:
-- Short reply, 1-2 sentences
-- Show interest in Web3 topics
-- No spam or blatant advertising
-- Sound human and natural
-- Optional relevant emoji
+Rules:
+- 1-2 sentences max, under 200 characters
+- Reference crypto/blockchain/DeFi/NFT when relevant
+- Add a genuine opinion or question (not generic praise)
+- No hashtags spam, no "DM me", no links
+- Sound like a real person, casual tone
+- Max 1 emoji if it fits
 
-Return only the reply text, no explanation.
+Return ONLY the reply text.
 `;
 
     try {

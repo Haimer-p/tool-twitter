@@ -164,6 +164,12 @@ async function testDashboardApi() {
   console.log('\n=== Dashboard API ===');
   const Database = require('../src/database');
   const Dashboard = require('../src/dashboard');
+  const mongoose = require('mongoose');
+
+  if (mongoose.connection.readyState !== 0) {
+    await mongoose.disconnect();
+    await new Promise((r) => setTimeout(r, 500));
+  }
 
   const db = new Database(uri);
   await db.connect();
