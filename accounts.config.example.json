@@ -22,14 +22,18 @@
       "maxPerAccountPerRun": 15,
       "keywordsPerRun": 6,
       "tweetsPerKeyword": 8,
+      "followMinFollowers": 500,
+      "followMaxFollowers": 0,
       "comboRatios": {
-        "like": 0.1,
-        "retweet": 0.15,
-        "reply": 0.15,
-        "follow": 0.1,
-        "like_retweet": 0.2,
-        "like_reply": 0.2,
-        "like_retweet_reply": 0.1
+        "like": 0.08,
+        "retweet": 0.12,
+        "reply": 0.12,
+        "follow": 0.08,
+        "like_retweet": 0.18,
+        "like_reply": 0.18,
+        "like_retweet_reply": 0.08,
+        "like_follow": 0.1,
+        "like_retweet_follow": 0.06
       }
     }
   },

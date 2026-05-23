@@ -22,22 +22,26 @@
       "maxPerAccountPerRun": 15,
       "keywordsPerRun": 6,
       "tweetsPerKeyword": 8,
+      "followMinFollowers": 1000,
+      "followMaxFollowers": 0,
       "comboRatios": {
-        "like": 0.1,
-        "retweet": 0.15,
-        "reply": 0.15,
-        "follow": 0.1,
-        "like_retweet": 0.2,
-        "like_reply": 0.2,
-        "like_retweet_reply": 0.1
+        "like": 0.08,
+        "retweet": 0.12,
+        "reply": 0.12,
+        "follow": 0.08,
+        "like_retweet": 0.18,
+        "like_reply": 0.18,
+        "like_retweet_reply": 0.08,
+        "like_follow": 0.1,
+        "like_retweet_follow": 0.06
       }
     }
   },
   "accounts": [
     {
-      "name": "acctest1",
+      "name": "acckingchiton",
       "enabled": true,
-      "keywords": ["solana", "memecoin", "airdrop"],
+      "keywords": ["solana", "memecoin", "airdrop","IRYNA", "trading crypto", "2LsescRjhcxoUwEQLpcsd3Gh6AHUyqEHANDakkoSpump", "Justice for Iryna", "JusticeforIryna Sol Community","NINJA" ],
       "delays": {
         "betweenActions": { "min": 60000, "max": 120000 }
       },
@@ -47,9 +51,9 @@
       }
     },
     {
-      "name": "acc nhattan",
+      "name": "accnhattan",
       "enabled": true,
-      "keywords": ["crypto", "trading crypto", "bull run"]
+      "keywords": ["IRYNA", "trading crypto", "2LsescRjhcxoUwEQLpcsd3Gh6AHUyqEHANDakkoSpump", "Justice for Iryna", "JusticeforIryna Sol Community","NINJA","Iryna Zarutska is a hero" ]
     }
   ]
 }

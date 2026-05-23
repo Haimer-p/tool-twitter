@@ -11,7 +11,8 @@
     "check-stats": "node scripts/check-stats.js",
     "verify": "node scripts/verify.js",
     "test": "node scripts/test-unit.js",
-    "test:ai": "node scripts/test-ai.js"
+    "test:ai": "node scripts/test-ai.js",
+    "login": "node scripts/login-account.js"
   },
   "keywords": [
     "twitter",

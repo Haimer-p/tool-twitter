@@ -16,14 +16,20 @@ module.exports = {
     keywordsPerRun: 6,
     tweetsPerKeyword: 8,
     followBackWaitDays: 3,
+    // Chỉ follow khi profile có từ X followers trở lên (0 = tắt lọc)
+    followMinFollowers: parseInt(process.env.FOLLOW_MIN_FOLLOWERS || '0', 10),
+    // Tùy chọn: bỏ qua nếu quá nhiều follower (0 = không giới hạn trên)
+    followMaxFollowers: parseInt(process.env.FOLLOW_MAX_FOLLOWERS || '0', 10) || null,
     comboRatios: {
-      like: 0.1,
-      retweet: 0.15,
-      reply: 0.15,
-      follow: 0.1,
-      like_retweet: 0.2,
-      like_reply: 0.2,
-      like_retweet_reply: 0.1,
+      like: 0.08,
+      retweet: 0.12,
+      reply: 0.12,
+      follow: 0.08,
+      like_retweet: 0.18,
+      like_reply: 0.18,
+      like_retweet_reply: 0.08,
+      like_follow: 0.1,
+      like_retweet_follow: 0.06,
     },
   },
 

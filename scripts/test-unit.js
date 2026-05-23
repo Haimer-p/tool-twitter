@@ -4,7 +4,7 @@
  */
 const assert = require('assert');
 const http = require('http');
-const { parseTweetId, randomMs } = require('../src/utils');
+const { parseTweetId, randomMs, parseFollowerCount } = require('../src/utils');
 const config = require('../config');
 
 let passed = 0;
@@ -47,6 +47,12 @@ test('parseTweetId twitter.com', () => {
 });
 test('parseTweetId invalid', () => {
   assert.strictEqual(parseTweetId('https://x.com/user'), null);
+});
+test('parseFollowerCount', () => {
+  assert.strictEqual(parseFollowerCount('1,234'), 1234);
+  assert.strictEqual(parseFollowerCount('1.2K'), 1200);
+  assert.strictEqual(parseFollowerCount('10M'), 10000000);
+  assert.strictEqual(parseFollowerCount('5.5K Followers'), 5500);
 });
 test('randomMs in range', () => {
   for (let i = 0; i < 50; i++) {

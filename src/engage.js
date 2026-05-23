@@ -1,6 +1,6 @@
 const logger = require('./logger');
 const BrowserManager = require('./browser');
-const { sleep, randomMs, parseTweetId } = require('./utils');
+const { sleep, randomMs, parseTweetId, parseFollowerCount } = require('./utils');
 
 const SELECTORS = {
   tweet: 'article[data-testid="tweet"]',
@@ -26,6 +26,8 @@ const COMBO_MAP = {
   like_retweet: ['like', 'retweet'],
   like_reply: ['like', 'reply'],
   like_retweet_reply: ['like', 'retweet', 'reply'],
+  like_follow: ['like', 'follow'],
+  like_retweet_follow: ['like', 'retweet', 'follow'],
 };
 
 const COMBO_DELAY = { min: 3000, max: 8000 };
@@ -261,6 +263,71 @@ class EngagementBot {
     }
   }
 
+  getFollowRules() {
+    const i = this.accountInteractions;
+    const min = i.followMinFollowers ?? 0;
+    const maxRaw = i.followMaxFollowers;
+    const max = maxRaw && maxRaw > 0 ? maxRaw : null;
+    return { min, max };
+  }
+
+  async getProfileFollowerCount(page) {
+    const raw = await page
+      .evaluate(() => {
+        const tryParse = (str) => {
+          if (!str || !/[\d]/.test(str)) return null;
+          return str.trim();
+        };
+
+        const links = document.querySelectorAll('a[href*="/followers"]');
+        for (const link of links) {
+          const aria = link.getAttribute('aria-label') || '';
+          if (/follower/i.test(aria)) {
+            const fromAria = tryParse(aria.split(/follower/i)[0]);
+            if (fromAria) return fromAria;
+          }
+          for (const span of link.querySelectorAll('span')) {
+            const t = tryParse(span.textContent);
+            if (t && /[\d.,]+[KMB]?/i.test(t)) return t;
+          }
+        }
+
+        const profileHeader = document.querySelector('[data-testid="UserProfileHeader_Items"]');
+        if (profileHeader) {
+          const text = profileHeader.innerText || '';
+          const m = text.match(/([\d.,]+[KMB]?)\s*Followers/i);
+          if (m) return m[1];
+        }
+
+        return null;
+      })
+      .catch(() => null);
+
+    return parseFollowerCount(raw);
+  }
+
+  async meetsFollowCriteria(page, username) {
+    const { min, max } = this.getFollowRules();
+    if (min <= 0 && !max) {
+      return { ok: true, count: null };
+    }
+
+    const count = await this.getProfileFollowerCount(page);
+    if (count === null) {
+      logger.warn(`[${this.currentAccount}] Không đọc được follower @${username}`);
+      return { ok: false, count: null, reason: 'unreadable' };
+    }
+
+    if (min > 0 && count < min) {
+      return { ok: false, count, reason: 'below_min', min, max };
+    }
+    if (max && count > max) {
+      return { ok: false, count, reason: 'above_max', min, max };
+    }
+
+    return { ok: true, count, min, max };
+  }
+
   async followUser(page, username, meta) {
     try {
       if (await this.db.hasFollowedUser(username, this.currentAccount)) {
@@ -269,6 +336,28 @@ class EngagementBot {
 
       await page.goto(`${this.baseUrl}/${username}`, { waitUntil: 'domcontentloaded' });
       await this.randomDelay(2000, 3000);
+
+      const criteria = await this.meetsFollowCriteria(page, username);
+      const { min, max } = this.getFollowRules();
+
+      if (!criteria.ok) {
+        if (criteria.reason === 'below_min') {
+          logger.info(
+            `[${this.currentAccount}] Skip follow @${username}: ${criteria.count} followers < min ${min}`
+          );
+        } else if (criteria.reason === 'above_max') {
+          logger.info(
+            `[${this.currentAccount}] Skip follow @${username}: ${criteria.count} followers > max ${max}`
+          );
+        }
+        return false;
+      }
+
+      if (criteria.count !== null) {
+        logger.info(
+          `[${this.currentAccount}] @${username} có ${criteria.count} followers (min ${min || 0}${max ? `, max ${max}` : ''})`
+        );
+      }
 
       const followButton = await page.$(SELECTORS.follow);
       if (!followButton) return false;
@@ -327,6 +416,9 @@ class EngagementBot {
           ok = await this.replyOnPage(page, replyText, meta);
           break;
         }
+        case 'follow':
+          ok = await this.followUser(page, tweetContent.author, meta);
+          break;
         default:
           break;
       }
@@ -469,36 +561,34 @@ class EngagementBot {
             `[${accountName}] Combo [${actions.join(' + ')}] → ${tweetUrl.substring(0, 70)}...`
           );
 
-          if (actions.length === 1 && actions[0] === 'follow') {
-            const tweetContent = await this.getTweetContent(page, tweetUrl);
-            if (!tweetContent) continue;
+          const tweetContent = await this.getTweetContent(page, tweetUrl);
+          if (!tweetContent) continue;
 
-            const meta = {
-              tweetId,
-              tweetUrl,
-              author: tweetContent.author,
-              content: tweetContent.text,
-              keyword,
-            };
+          const meta = {
+            tweetId,
+            tweetUrl,
+            author: tweetContent.author,
+            content: tweetContent.text,
+            keyword,
+          };
 
-            const ok = await this.followUser(page, tweetContent.author, meta);
-            if (ok) interactionsThisRun++;
-          } else {
-            await this.openTweetPage(page, tweetUrl);
-            const tweetContent = await this.getTweetContentFromPage(page);
-            if (!tweetContent) continue;
+          const tweetActions = actions.filter((a) => a !== 'follow');
+          const includeFollow = actions.includes('follow');
+          let count = 0;
 
-            const meta = {
-              tweetId,
-              tweetUrl,
-              author: tweetContent.author,
-              content: tweetContent.text,
-              keyword,
-            };
-
-            const count = await this.executeCombo(page, actions, meta, tweetContent);
-            interactionsThisRun += count;
+          if (tweetActions.length > 0) {
+            count += await this.executeCombo(page, tweetActions, meta, tweetContent);
           }
+
+          if (includeFollow) {
+            if (tweetActions.length > 0) {
+              await this.randomDelay(COMBO_DELAY.min, COMBO_DELAY.max);
+            }
+            const followed = await this.followUser(page, tweetContent.author, meta);
+            if (followed) count += 1;
+          }
+
+          interactionsThisRun += count;
 
           await this.randomDelay(
             this.accountDelays.betweenActions.min,
