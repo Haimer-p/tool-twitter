@@ -15,11 +15,20 @@ module.exports = {
     maxPerAccountPerRun: 15,
     keywordsPerRun: 6,
     tweetsPerKeyword: 8,
-    likeRatio: 0.2,
-    retweetRatio: 0.3,
-    replyRatio: 0.35,
-    followRatio: 0.15,
     followBackWaitDays: 3,
+    comboRatios: {
+      like: 0.1,
+      retweet: 0.15,
+      reply: 0.15,
+      follow: 0.1,
+      like_retweet: 0.2,
+      like_reply: 0.2,
+      like_retweet_reply: 0.1,
+    },
+  },
+
+  parallel: {
+    maxConcurrent: parseInt(process.env.MAX_PARALLEL_ACCOUNTS || '2', 10),
   },
 
   browser: {
@@ -31,8 +40,21 @@ module.exports = {
   },
 
   gemini: {
-    model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+    model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+    fallbackModels: ['gemini-2.5-flash-lite', 'gemini-2.0-flash-lite', 'gemini-2.0-flash'],
     temperature: 0.9,
+  },
+
+  deepseek: {
+    baseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
+    model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+    temperature: 0.9,
+    maxTokens: 150,
+  },
+
+  // alternate | gemini | deepseek
+  ai: {
+    strategy: process.env.AI_STRATEGY || 'alternate',
   },
 
   database: {

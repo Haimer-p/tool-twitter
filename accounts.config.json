@@ -1,0 +1,55 @@
+{
+  "parallel": {
+    "maxConcurrent": 2
+  },
+  "defaults": {
+    "keywords": [
+      "crypto",
+      "bitcoin",
+      "ethereum",
+      "web3",
+      "blockchain",
+      "defi",
+      "nft",
+      "solana"
+    ],
+    "delays": {
+      "betweenActions": { "min": 90000, "max": 180000 },
+      "betweenSearchRounds": { "min": 600000, "max": 900000 }
+    },
+    "interactions": {
+      "maxPerDay": 50,
+      "maxPerAccountPerRun": 15,
+      "keywordsPerRun": 6,
+      "tweetsPerKeyword": 8,
+      "comboRatios": {
+        "like": 0.1,
+        "retweet": 0.15,
+        "reply": 0.15,
+        "follow": 0.1,
+        "like_retweet": 0.2,
+        "like_reply": 0.2,
+        "like_retweet_reply": 0.1
+      }
+    }
+  },
+  "accounts": [
+    {
+      "name": "acctest1",
+      "enabled": true,
+      "keywords": ["solana", "memecoin", "airdrop"],
+      "delays": {
+        "betweenActions": { "min": 60000, "max": 120000 }
+      },
+      "interactions": {
+        "maxPerDay": 30,
+        "maxPerAccountPerRun": 10
+      }
+    },
+    {
+      "name": "acc nhattan",
+      "enabled": true,
+      "keywords": ["crypto", "trading crypto", "bull run"]
+    }
+  ]
+}

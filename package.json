@@ -10,7 +10,8 @@
     "repair-stats": "node scripts/repair-stats.js",
     "check-stats": "node scripts/check-stats.js",
     "verify": "node scripts/verify.js",
-    "test": "node scripts/test-unit.js"
+    "test": "node scripts/test-unit.js",
+    "test:ai": "node scripts/test-ai.js"
   },
   "keywords": [
     "twitter",

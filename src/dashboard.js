@@ -3,6 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs').promises;
+const { CONFIG_PATH } = require('./accountConfig');
 const logger = require('./logger');
 
 class Dashboard {
@@ -73,6 +74,18 @@ class Dashboard {
         res.json({ accounts });
       } catch {
         res.json({ accounts: [] });
+      }
+    });
+
+    this.app.get('/api/account-config', auth, async (req, res) => {
+      try {
+        const raw = await fs.readFile(CONFIG_PATH, 'utf8').catch(() => null);
+        if (!raw) {
+          return res.json({ source: 'defaults', config: null });
+        }
+        res.json({ source: 'accounts.config.json', config: JSON.parse(raw) });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
       }
     });
 

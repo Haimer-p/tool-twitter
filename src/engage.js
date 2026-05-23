@@ -1,4 +1,5 @@
 const logger = require('./logger');
+const BrowserManager = require('./browser');
 const { sleep, randomMs, parseTweetId } = require('./utils');
 
 const SELECTORS = {
@@ -17,6 +18,18 @@ const SELECTORS = {
   unfollowConfirm: 'button[data-testid="confirmationSheetConfirm"]',
 };
 
+const COMBO_MAP = {
+  like: ['like'],
+  retweet: ['retweet'],
+  reply: ['reply'],
+  follow: ['follow'],
+  like_retweet: ['like', 'retweet'],
+  like_reply: ['like', 'reply'],
+  like_retweet_reply: ['like', 'retweet', 'reply'],
+};
+
+const COMBO_DELAY = { min: 3000, max: 8000 };
+
 class EngagementBot {
   constructor(browserManager, authManager, aiService, database, config, onActivity) {
     this.browser = browserManager;
@@ -27,7 +40,15 @@ class EngagementBot {
     this.baseUrl = config.baseUrl || 'https://x.com';
     this.isRunning = true;
     this.currentAccount = null;
+    this.accountDelays = config.delays;
+    this.accountInteractions = config.interactions;
     this.onActivity = onActivity || (() => {});
+  }
+
+  setAccountContext(profile) {
+    this.currentAccount = profile.name;
+    this.accountDelays = profile.delays || this.config.delays;
+    this.accountInteractions = profile.interactions || this.config.interactions;
   }
 
   async randomDelay(min, max) {
@@ -35,54 +56,70 @@ class EngagementBot {
   }
 
   async humanType(page, selector, text) {
+    const typing = this.accountDelays.typing || this.config.delays.typing;
     await page.click(selector);
     await page.keyboard.down('Control');
     await page.keyboard.press('KeyA');
     await page.keyboard.up('Control');
     await page.keyboard.press('Backspace');
     await page.keyboard.type(text, {
-      delay: randomMs(this.config.delays.typing.min, this.config.delays.typing.max),
+      delay: randomMs(typing.min, typing.max),
     });
   }
 
-  decideAction() {
-    const { likeRatio, retweetRatio, replyRatio, followRatio } = this.config.interactions;
+  decideActionCombo(comboRatios) {
+    const ratios = comboRatios || this.accountInteractions.comboRatios || this.config.interactions.comboRatios;
+    if (!ratios) return ['like'];
+
+    const entries = Object.entries(ratios);
     const rand = Math.random();
-    if (rand < likeRatio) return 'like';
-    if (rand < likeRatio + retweetRatio) return 'retweet';
-    if (rand < likeRatio + retweetRatio + replyRatio) return 'reply';
-    if (rand < likeRatio + retweetRatio + replyRatio + followRatio) return 'follow';
-    return 'like';
+    let cumulative = 0;
+
+    for (const [key, weight] of entries) {
+      cumulative += weight;
+      if (rand < cumulative && COMBO_MAP[key]) {
+        return COMBO_MAP[key];
+      }
+    }
+
+    return COMBO_MAP.like;
   }
 
   async searchTweets(page, keyword) {
-    logger.info(`Searching tweets: ${keyword}`);
+    logger.info(`[${this.currentAccount}] Searching: ${keyword}`);
     const url = `${this.baseUrl}/search?q=${encodeURIComponent(keyword)}&src=typed_query&f=live`;
     await page.goto(url, { waitUntil: 'domcontentloaded' });
     await this.randomDelay(2000, 4000);
     await page.evaluate(() => window.scrollBy(0, window.innerHeight));
     await this.randomDelay(
-      this.config.delays.scroll.min,
-      this.config.delays.scroll.max
+      this.accountDelays.scroll?.min || this.config.delays.scroll.min,
+      this.accountDelays.scroll?.max || this.config.delays.scroll.max
     );
 
-    const tweets = await page.$$eval(SELECTORS.tweet, (articles) =>
-      articles
-        .map((article) => {
-          const link = article.querySelector('a[href*="/status/"]');
-          return link ? link.href : null;
-        })
-        .filter(Boolean)
-    ).catch(() => []);
+    const tweets = await page
+      .$$eval(SELECTORS.tweet, (articles) =>
+        articles
+          .map((article) => {
+            const link = article.querySelector('a[href*="/status/"]');
+            return link ? link.href : null;
+          })
+          .filter(Boolean)
+      )
+      .catch(() => []);
 
     return [...new Set(tweets)];
   }
 
-  async getTweetContent(page, tweetUrl) {
-    try {
-      await page.goto(tweetUrl, { waitUntil: 'domcontentloaded' });
-      await this.randomDelay(2000, 3000);
+  async openTweetPage(page, tweetUrl) {
+    await page.goto(tweetUrl, { waitUntil: 'domcontentloaded' });
+    await this.randomDelay(
+      this.accountDelays.pageLoad?.min || 3000,
+      this.accountDelays.pageLoad?.max || 6000
+    );
+  }
 
+  async getTweetContentFromPage(page) {
+    try {
       const text = await page
         .$eval(SELECTORS.tweetText, (el) => el.textContent)
         .catch(() => '');
@@ -99,6 +136,15 @@ class EngagementBot {
     }
   }
 
+  async getTweetContent(page, tweetUrl) {
+    try {
+      await this.openTweetPage(page, tweetUrl);
+      return await this.getTweetContentFromPage(page);
+    } catch {
+      return null;
+    }
+  }
+
   async recordInteraction(data) {
     const saved = await this.db.saveInteractedTweet(data);
     if (!saved) return false;
@@ -109,16 +155,14 @@ class EngagementBot {
       action: data.interactionType,
       target: data.tweetUrl || `@${data.authorUsername}`,
       success: true,
+      details: data.combo ? { combo: data.combo } : undefined,
     });
     this.onActivity();
     return true;
   }
 
-  async likeTweet(page, tweetUrl, meta) {
+  async likeOnPage(page, meta) {
     try {
-      await page.goto(tweetUrl, { waitUntil: 'domcontentloaded' });
-      await this.randomDelay(2000, 3000);
-
       const unlike = await page.$(SELECTORS.unlike);
       if (unlike) return false;
 
@@ -126,11 +170,11 @@ class EngagementBot {
       if (!likeButton) return false;
 
       await likeButton.click();
-      logger.info(`Liked: ${tweetUrl}`);
+      logger.info(`[${this.currentAccount}] Liked: ${meta.tweetUrl}`);
 
       return await this.recordInteraction({
         tweetId: meta.tweetId,
-        tweetUrl,
+        tweetUrl: meta.tweetUrl,
         authorUsername: meta.author,
         content: meta.content,
         interactionType: 'like',
@@ -139,36 +183,17 @@ class EngagementBot {
       });
     } catch (error) {
       logger.error(`Like error: ${error.message}`);
-      await this.db.logActivity({
-        accountName: this.currentAccount,
-        action: 'error',
-        target: tweetUrl,
-        success: false,
-        errorMessage: error.message,
-      });
       return false;
     }
   }
 
-  async retweet(page, tweetUrl, meta) {
+  async retweetOnPage(page, meta) {
     try {
-      await page.goto(tweetUrl, { waitUntil: 'domcontentloaded' });
-      await this.randomDelay(
-        this.config.delays.pageLoad?.min || 3000,
-        this.config.delays.pageLoad?.max || 6000
-      );
-
       const alreadyRetweeted = await page.$('[data-testid="unretweet"]');
-      if (alreadyRetweeted) {
-        logger.info(`Already retweeted: ${tweetUrl}`);
-        return false;
-      }
+      if (alreadyRetweeted) return false;
 
       const retweetButton = await page.$(SELECTORS.retweet);
-      if (!retweetButton) {
-        logger.warn(`Retweet button not found: ${tweetUrl}`);
-        return false;
-      }
+      if (!retweetButton) return false;
 
       await retweetButton.click();
       await this.randomDelay(1000, 2000);
@@ -176,18 +201,15 @@ class EngagementBot {
       const confirmButton =
         (await page.$(SELECTORS.retweetConfirm)) ||
         (await page.$('[data-testid="retweetConfirm"]'));
-      if (!confirmButton) {
-        logger.warn(`Retweet confirm not found: ${tweetUrl}`);
-        return false;
-      }
+      if (!confirmButton) return false;
 
       await confirmButton.click();
       await this.randomDelay(1500, 2500);
-      logger.info(`Retweeted: ${tweetUrl}`);
+      logger.info(`[${this.currentAccount}] Retweeted: ${meta.tweetUrl}`);
 
       return await this.recordInteraction({
         tweetId: meta.tweetId,
-        tweetUrl,
+        tweetUrl: meta.tweetUrl,
         authorUsername: meta.author,
         content: meta.content,
         interactionType: 'retweet',
@@ -200,14 +222,9 @@ class EngagementBot {
     }
   }
 
-  async replyToTweet(page, tweetUrl, replyText, meta) {
+  async replyOnPage(page, replyText, meta) {
     try {
-      await page.goto(tweetUrl, { waitUntil: 'domcontentloaded' });
-      await this.randomDelay(
-        this.config.delays.pageLoad?.min || 3000,
-        this.config.delays.pageLoad?.max || 6000
-      );
-      logger.info(`AI reply: "${replyText.substring(0, 80)}..."`);
+      logger.info(`[${this.currentAccount}] AI reply: "${replyText.substring(0, 80)}..."`);
 
       const replyButton = await page.$(SELECTORS.reply);
       if (!replyButton) return false;
@@ -226,11 +243,11 @@ class EngagementBot {
       if (!postButton) return false;
 
       await postButton.click();
-      logger.info(`Replied: ${tweetUrl.substring(0, 60)}...`);
+      logger.info(`[${this.currentAccount}] Replied: ${meta.tweetUrl.substring(0, 60)}...`);
 
       return await this.recordInteraction({
         tweetId: meta.tweetId,
-        tweetUrl,
+        tweetUrl: meta.tweetUrl,
         authorUsername: meta.author,
         content: meta.content,
         interactionType: 'reply',
@@ -263,7 +280,7 @@ class EngagementBot {
 
       await followButton.click();
       await this.randomDelay(1000, 1500);
-      logger.info(`Followed @${username}`);
+      logger.info(`[${this.currentAccount}] Followed @${username}`);
 
       await this.db.saveFollowedUser({
         userId: username,
@@ -282,27 +299,60 @@ class EngagementBot {
       });
     } catch (error) {
       logger.error(`Follow error: ${error.message}`);
-      await this.db.logActivity({
-        accountName: this.currentAccount,
-        action: 'follow',
-        target: `@${username}`,
-        success: false,
-        errorMessage: error.message,
-      });
       return false;
     }
   }
 
-  async checkAndUnfollow(page, accountName) {
+  async executeCombo(page, actions, meta, tweetContent) {
+    let successCount = 0;
+
+    for (let i = 0; i < actions.length; i++) {
+      if (!this.isRunning) break;
+
+      const action = actions[i];
+      let ok = false;
+
+      switch (action) {
+        case 'like':
+          ok = await this.likeOnPage(page, meta);
+          break;
+        case 'retweet':
+          ok = await this.retweetOnPage(page, meta);
+          break;
+        case 'reply': {
+          const replyText = await this.ai.generateReply(
+            tweetContent.text,
+            tweetContent.author
+          );
+          ok = await this.replyOnPage(page, replyText, meta);
+          break;
+        }
+        default:
+          break;
+      }
+
+      if (ok) successCount++;
+
+      if (i < actions.length - 1) {
+        await this.randomDelay(COMBO_DELAY.min, COMBO_DELAY.max);
+      }
+    }
+
+    return successCount;
+  }
+
+  async checkAndUnfollow(page, accountName, delays) {
+    const accountDelays = delays || this.accountDelays;
     const users = await this.db.getUsersToCheckFollowBack(
       accountName,
-      this.config.interactions.followBackWaitDays
+      this.accountInteractions.followBackWaitDays ||
+        this.config.interactions.followBackWaitDays
     );
 
     for (const user of users) {
       if (!this.isRunning) break;
 
-      logger.info(`Checking follow-back: @${user.username}`);
+      logger.info(`[${accountName}] Checking follow-back: @${user.username}`);
       await page.goto(`${this.baseUrl}/${user.username}`, { waitUntil: 'domcontentloaded' });
       await this.randomDelay(2000, 3000);
 
@@ -319,7 +369,6 @@ class EngagementBot {
 
       if (followedBack) {
         await this.db.updateFollowBackStatus(user.userId, accountName, true);
-        logger.info(`@${user.username} followed back`);
         continue;
       }
 
@@ -340,31 +389,34 @@ class EngagementBot {
             target: `@${user.username}`,
             success: true,
           });
-          logger.info(`Unfollowed @${user.username}`);
         }
       }
 
       await this.randomDelay(
-        this.config.delays.betweenActions.min,
-        this.config.delays.betweenActions.max
+        accountDelays.betweenActions.min,
+        accountDelays.betweenActions.max
       );
     }
   }
 
-  async processAccount(accountName, keywords) {
+  async processAccount(accountProfile) {
     if (!this.isRunning) return;
 
+    const accountName = accountProfile.name;
+    this.setAccountContext(accountProfile);
+
     logger.info(`Processing account: ${accountName}`);
-    this.currentAccount = accountName;
+    const interactions = this.accountInteractions;
 
     const todayCount = await this.db.getTodayInteractionCount(accountName);
-    if (todayCount >= this.config.interactions.maxPerDay) {
+    if (todayCount >= interactions.maxPerDay) {
       logger.warn(`${accountName}: daily limit reached (${todayCount})`);
       return;
     }
 
-    await this.browser.launch();
-    const page = await this.browser.newPage();
+    const browserManager = new BrowserManager(this.config);
+    await browserManager.launch();
+    const page = await browserManager.newPage();
 
     try {
       const loggedIn = await this.auth.login(page, accountName);
@@ -383,27 +435,27 @@ class EngagementBot {
       await this.randomDelay(3000, 5000);
 
       let interactionsThisRun = 0;
-      const keywordsPerRun =
-        this.config.interactions.keywordsPerRun || 6;
-      const tweetsPerKeyword =
-        this.config.interactions.tweetsPerKeyword || 8;
+      const keywordsPerRun = interactions.keywordsPerRun || 6;
+      const tweetsPerKeyword = interactions.tweetsPerKeyword || 8;
+      const keywords = accountProfile.keywords || this.config.keywords;
+
       const shuffledKeywords = [...keywords].sort(() => Math.random() - 0.5);
       const selectedKeywords = shuffledKeywords.slice(0, keywordsPerRun);
-      logger.info(`Keywords this run: ${selectedKeywords.join(', ')}`);
+      logger.info(`[${accountName}] Keywords: ${selectedKeywords.join(', ')}`);
 
       for (const keyword of selectedKeywords) {
         if (!this.isRunning) break;
-        if (interactionsThisRun >= this.config.interactions.maxPerAccountPerRun) break;
+        if (interactionsThisRun >= interactions.maxPerAccountPerRun) break;
 
         const tweetUrls = await this.searchTweets(page, keyword);
-        logger.info(`Found ${tweetUrls.length} tweets for "${keyword}"`);
+        logger.info(`[${accountName}] Found ${tweetUrls.length} tweets for "${keyword}"`);
 
         for (const tweetUrl of tweetUrls.slice(0, tweetsPerKeyword)) {
           if (!this.isRunning) break;
-          if (interactionsThisRun >= this.config.interactions.maxPerAccountPerRun) break;
+          if (interactionsThisRun >= interactions.maxPerAccountPerRun) break;
 
           const today = await this.db.getTodayInteractionCount(accountName);
-          if (today >= this.config.interactions.maxPerDay) break;
+          if (today >= interactions.maxPerDay) break;
 
           const tweetId = parseTweetId(tweetUrl);
           if (!tweetId) continue;
@@ -412,59 +464,58 @@ class EngagementBot {
             continue;
           }
 
-          const tweetContent = await this.getTweetContent(page, tweetUrl);
-          if (!tweetContent) continue;
+          const actions = this.decideActionCombo(interactions.comboRatios);
+          logger.info(
+            `[${accountName}] Combo [${actions.join(' + ')}] → ${tweetUrl.substring(0, 70)}...`
+          );
 
-          const meta = {
-            tweetId,
-            tweetUrl,
-            author: tweetContent.author,
-            content: tweetContent.text,
-            keyword,
-          };
+          if (actions.length === 1 && actions[0] === 'follow') {
+            const tweetContent = await this.getTweetContent(page, tweetUrl);
+            if (!tweetContent) continue;
 
-          const action = this.decideAction();
-          logger.info(`Action "${action}" → ${tweetUrl.substring(0, 70)}...`);
-          let success = false;
+            const meta = {
+              tweetId,
+              tweetUrl,
+              author: tweetContent.author,
+              content: tweetContent.text,
+              keyword,
+            };
 
-          switch (action) {
-            case 'like':
-              success = await this.likeTweet(page, tweetUrl, meta);
-              break;
-            case 'retweet':
-              success = await this.retweet(page, tweetUrl, meta);
-              break;
-            case 'reply': {
-              const replyText = await this.ai.generateReply(
-                tweetContent.text,
-                tweetContent.author
-              );
-              success = await this.replyToTweet(page, tweetUrl, replyText, meta);
-              break;
-            }
-            case 'follow':
-              success = await this.followUser(page, tweetContent.author, meta);
-              break;
-            default:
-              break;
+            const ok = await this.followUser(page, tweetContent.author, meta);
+            if (ok) interactionsThisRun++;
+          } else {
+            await this.openTweetPage(page, tweetUrl);
+            const tweetContent = await this.getTweetContentFromPage(page);
+            if (!tweetContent) continue;
+
+            const meta = {
+              tweetId,
+              tweetUrl,
+              author: tweetContent.author,
+              content: tweetContent.text,
+              keyword,
+            };
+
+            const count = await this.executeCombo(page, actions, meta, tweetContent);
+            interactionsThisRun += count;
           }
 
-          if (success) interactionsThisRun++;
-
           await this.randomDelay(
-            this.config.delays.betweenActions.min,
-            this.config.delays.betweenActions.max
+            this.accountDelays.betweenActions.min,
+            this.accountDelays.betweenActions.max
           );
         }
 
         await this.randomDelay(
-          this.config.delays.betweenSearchRounds.min,
-          this.config.delays.betweenSearchRounds.max
+          this.accountDelays.betweenSearchRounds?.min ||
+            this.config.delays.betweenSearchRounds.min,
+          this.accountDelays.betweenSearchRounds?.max ||
+            this.config.delays.betweenSearchRounds.max
         );
       }
 
       if (this.isRunning) {
-        await this.checkAndUnfollow(page, accountName);
+        await this.checkAndUnfollow(page, accountName, this.accountDelays);
       }
 
       logger.info(`Done ${accountName}: ${interactionsThisRun} interactions this run`);
@@ -478,19 +529,37 @@ class EngagementBot {
         errorMessage: error.message,
       });
     } finally {
-      await this.browser.close();
+      await browserManager.close();
     }
   }
 
+  async runParallelAccounts(profiles, maxConcurrent) {
+    const queue = [...profiles];
+    const concurrency = Math.min(maxConcurrent || 2, queue.length);
+
+    logger.info(`Parallel run: ${queue.length} account(s), max ${concurrency} concurrent`);
+
+    const worker = async () => {
+      while (this.isRunning) {
+        const profile = queue.shift();
+        if (!profile) break;
+        await this.processAccount(profile);
+      }
+    };
+
+    const workers = Array.from({ length: concurrency }, () => worker());
+    await Promise.all(workers);
+  }
+
   async runMultipleAccounts(accounts, keywords) {
-    for (const account of accounts) {
-      if (!this.isRunning) break;
-      await this.processAccount(account, keywords);
-      await this.randomDelay(
-        this.config.delays.betweenAccounts.min,
-        this.config.delays.betweenAccounts.max
-      );
-    }
+    const profiles = accounts.map((name) => ({
+      name,
+      keywords: keywords || this.config.keywords,
+      delays: this.config.delays,
+      interactions: this.config.interactions,
+      enabled: true,
+    }));
+    await this.runParallelAccounts(profiles, 1);
   }
 }
 

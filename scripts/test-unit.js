@@ -56,20 +56,43 @@ test('randomMs in range', () => {
 });
 
 console.log('\n=== Config ===');
-test('interaction ratios sum to 1', () => {
-  const { likeRatio, retweetRatio, replyRatio, followRatio } = config.interactions;
-  const sum = likeRatio + retweetRatio + replyRatio + followRatio;
+test('comboRatios sum to 1', () => {
+  const ratios = config.interactions.comboRatios;
+  const sum = Object.values(ratios).reduce((a, b) => a + b, 0);
   assert.ok(Math.abs(sum - 1) < 0.001, `sum=${sum}`);
 });
 
-console.log('\n=== EngagementBot.decideAction ===');
+console.log('\n=== EngagementBot.decideActionCombo ===');
 const EngagementBot = require('../src/engage');
 const mockBot = new EngagementBot({}, {}, {}, {}, config);
-test('decideAction returns valid actions', () => {
-  const valid = new Set(['like', 'retweet', 'reply', 'follow']);
+const VALID_ACTIONS = new Set(['like', 'retweet', 'reply', 'follow']);
+test('decideActionCombo returns valid action arrays', () => {
   for (let i = 0; i < 200; i++) {
-    assert.ok(valid.has(mockBot.decideAction()));
+    const combo = mockBot.decideActionCombo();
+    assert.ok(Array.isArray(combo) && combo.length > 0);
+    for (const action of combo) {
+      assert.ok(VALID_ACTIONS.has(action), `invalid action: ${action}`);
+    }
   }
+});
+
+console.log('\n=== Account config ===');
+const { loadAccountConfig, resolveAccountProfile } = require('../src/accountConfig');
+test('loadAccountConfig returns accounts', () => {
+  const loaded = loadAccountConfig(config);
+  if (loaded) {
+    assert.ok(loaded.accounts.length > 0);
+    assert.ok(loaded.parallel.maxConcurrent >= 1);
+  }
+});
+test('resolveAccountProfile merges defaults', () => {
+  const profile = resolveAccountProfile(
+    { name: 'test', keywords: ['btc'] },
+    { keywords: ['crypto'], interactions: { maxPerDay: 10 } },
+    config
+  );
+  assert.deepStrictEqual(profile.keywords, ['btc']);
+  assert.strictEqual(profile.interactions.maxPerDay, 10);
 });
 
 console.log('\n=== Cron ===');

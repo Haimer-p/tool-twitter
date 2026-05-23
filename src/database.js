@@ -18,7 +18,10 @@ const interactedTweetSchema = new mongoose.Schema({
   aiGeneratedReply: { type: String },
 });
 
-interactedTweetSchema.index({ tweetId: 1, accountName: 1 }, { unique: true });
+interactedTweetSchema.index(
+  { tweetId: 1, accountName: 1, interactionType: 1 },
+  { unique: true }
+);
 
 const followedUserSchema = new mongoose.Schema({
   userId: { type: String, required: true },
@@ -98,6 +101,7 @@ class Database {
       try {
         await mongoose.connect(this.uri, options);
         this.connected = true;
+        await this.migrateInteractedTweetIndexes();
         logger.info('MongoDB connected successfully');
         return;
       } catch (error) {
@@ -113,6 +117,27 @@ class Database {
       'Kiem tra: (1) IP da whitelist tren Atlas Network Access, (2) MONGODB_URI dung user/password, (3) cluster dang chay.';
     logger.error(`${hint} Chi tiet: ${lastError.message}`);
     throw lastError;
+  }
+
+  async migrateInteractedTweetIndexes() {
+    try {
+      const coll = mongoose.connection.collection('interactedtweets');
+      const indexes = await coll.indexes();
+      for (const idx of indexes) {
+        if (
+          idx.unique &&
+          idx.key?.tweetId === 1 &&
+          idx.key?.accountName === 1 &&
+          idx.key?.interactionType === undefined
+        ) {
+          await coll.dropIndex(idx.name);
+          logger.info(`Dropped legacy index: ${idx.name}`);
+        }
+      }
+      await InteractedTweet.syncIndexes();
+    } catch (error) {
+      logger.warn(`Index migration skipped: ${error.message}`);
+    }
   }
 
   async disconnect() {

@@ -1,7 +1,6 @@
 require('dotenv').config();
 const dns = require('node:dns');
 
-// Node 22 + Windows: tranh loi SSL/TLS khi ket noi MongoDB Atlas
 dns.setDefaultResultOrder('ipv4first');
 const path = require('path');
 const readline = require('readline');
@@ -14,6 +13,7 @@ const AIService = require('./ai');
 const Database = require('./database');
 const EngagementBot = require('./engage');
 const Dashboard = require('./dashboard');
+const { loadAccountConfig, filterAccountsByName } = require('./accountConfig');
 const logger = require('./logger');
 
 let bot = null;
@@ -21,7 +21,7 @@ let dashboard = null;
 let database = null;
 let botRunning = false;
 let shutdownRequested = false;
-let runtimeState = { accounts: [], keywords: config.keywords };
+let runtimeState = { accounts: [], parallel: { maxConcurrent: 2 } };
 
 function askQuestion(query) {
   const rl = readline.createInterface({
@@ -37,9 +37,10 @@ function askQuestion(query) {
 }
 
 function validateEnv() {
-  if (!process.env.GEMINI_API_KEY) {
-    logger.error('GEMINI_API_KEY is required in .env');
-    logger.info('Get key: https://aistudio.google.com/app/apikey');
+  if (!process.env.GEMINI_API_KEY && !process.env.DEEPSEEK_API_KEY) {
+    logger.error('Need at least one: GEMINI_API_KEY or DEEPSEEK_API_KEY in .env');
+    logger.info('Gemini: https://aistudio.google.com/app/apikey');
+    logger.info('DeepSeek: https://platform.deepseek.com/api_keys');
     process.exit(1);
   }
   if (!process.env.MONGODB_URI) {
@@ -48,7 +49,47 @@ function validateEnv() {
   }
 }
 
-async function runBot(accounts, keywords) {
+async function loadProfilesFromCli() {
+  const accountsInput = await askQuestion(
+    'Account names (comma-separated, e.g. account1,account2): '
+  );
+  const names = accountsInput
+    .split(',')
+    .map((a) => a.trim())
+    .filter(Boolean);
+
+  if (names.length === 0) {
+    logger.error('At least one account is required');
+    process.exit(1);
+  }
+
+  return names.map((name) => ({
+    name,
+    enabled: true,
+    keywords: config.keywords,
+    delays: config.delays,
+    interactions: config.interactions,
+  }));
+}
+
+async function resolveAccountProfiles() {
+  const loaded = loadAccountConfig(config);
+  if (loaded) {
+    logger.info(
+      `Loaded ${loaded.accounts.length} account(s) from accounts.config.json (parallel: ${loaded.parallel.maxConcurrent})`
+    );
+    return loaded;
+  }
+
+  logger.warn('accounts.config.json not found — using CLI input');
+  const accounts = await loadProfilesFromCli();
+  return {
+    accounts,
+    parallel: { maxConcurrent: config.parallel?.maxConcurrent || 1 },
+  };
+}
+
+async function runBot(profiles, maxConcurrent) {
   if (!bot || botRunning) return;
   botRunning = true;
   bot.isRunning = true;
@@ -56,7 +97,7 @@ async function runBot(accounts, keywords) {
 
   logger.info(`Bot started at ${new Date().toLocaleString()}`);
   try {
-    await bot.runMultipleAccounts(accounts, keywords);
+    await bot.runParallelAccounts(profiles, maxConcurrent);
   } catch (error) {
     logger.error(`Bot run error: ${error.message}`);
   } finally {
@@ -78,12 +119,12 @@ function handleControl(action, data) {
   }
 
   if (action === 'start') {
-    const accounts =
-      data?.accounts?.length > 0 ? data.accounts : runtimeState.accounts;
-    const keywords =
-      data?.keywords?.length > 0 ? data.keywords : runtimeState.keywords;
-    if (accounts.length > 0) {
-      runBot(accounts, keywords);
+    let profiles = runtimeState.accounts;
+    if (data?.accountNames?.length > 0) {
+      profiles = filterAccountsByName(profiles, data.accountNames);
+    }
+    if (profiles.length > 0) {
+      runBot(profiles, runtimeState.parallel?.maxConcurrent || 2);
     } else {
       logger.warn('Start ignored: no accounts configured');
     }
@@ -107,7 +148,7 @@ async function main() {
   console.log(`
   ╔═══════════════════════════════════════════╗
   ║   Twitter/X Auto Engagement Tool          ║
-  ║   Web3 + Gemini AI + MongoDB Atlas          ║
+  ║   Multi-account + Combo + Gemini/DeepSeek   ║
   ╚═══════════════════════════════════════════╝
   `);
 
@@ -119,7 +160,7 @@ async function main() {
     path.join(process.cwd(), 'accounts'),
     config.baseUrl
   );
-  const aiService = new AIService(process.env.GEMINI_API_KEY, config);
+  const aiService = new AIService(config);
 
   bot = new EngagementBot(
     browserManager,
@@ -134,25 +175,7 @@ async function main() {
   dashboard.app.locals.botRunning = false;
   await dashboard.start(config.dashboard.port);
 
-  const accountsInput = await askQuestion(
-    'Account names (comma-separated, e.g. account1,account2): '
-  );
-  const accounts = accountsInput
-    .split(',')
-    .map((a) => a.trim())
-    .filter(Boolean);
-
-  if (accounts.length === 0) {
-    logger.error('At least one account is required');
-    process.exit(1);
-  }
-
-  const keywordsInput = await askQuestion(
-    `Keywords (default: ${config.keywords.join(', ')}): `
-  );
-  const keywords = keywordsInput.trim()
-    ? keywordsInput.split(',').map((k) => k.trim())
-    : config.keywords;
+  const { accounts, parallel } = await resolveAccountProfiles();
 
   console.log('\nSchedule:');
   console.log('1. Run now');
@@ -161,10 +184,10 @@ async function main() {
 
   const scheduleChoice = await askQuestion('Choice (1-3): ');
 
-  const run = () => runBot(accounts, keywords);
-
-  runtimeState = { accounts, keywords };
+  runtimeState = { accounts, parallel };
   if (dashboard) dashboard.botState = runtimeState;
+
+  const run = () => runBot(accounts, parallel.maxConcurrent);
 
   switch (scheduleChoice.trim()) {
     case '2': {
