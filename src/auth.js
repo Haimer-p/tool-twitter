@@ -30,10 +30,21 @@ class AuthManager {
   async loadCookies(accountName) {
     try {
       const data = await fs.readFile(this.getCookiePath(accountName), 'utf8');
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed?.cookies && Array.isArray(parsed.cookies)) return parsed.cookies;
+      return null;
     } catch {
       return null;
     }
+  }
+
+  async listAccountNames() {
+    await this.ensureAccountsDir();
+    const files = await fs.readdir(this.accountsDir);
+    return files
+      .filter((f) => f.endsWith('.json') && !f.includes('.config') && !f.includes('.profile'))
+      .map((f) => f.replace('.json', ''));
   }
 
   askEnter(prompt) {

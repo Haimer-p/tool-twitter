@@ -4,12 +4,14 @@ const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs').promises;
 const logger = require('./logger');
+const { loadProfilesConfig } = require('./accountProfiles');
 
 class Dashboard {
-  constructor(database, config, onControl) {
+  constructor(database, config, onControl, accountsDir) {
     this.db = database;
     this.config = config;
     this.onControl = onControl || (() => {});
+    this.accountsDir = accountsDir || path.join(process.cwd(), 'accounts');
     this.app = express();
     this.server = http.createServer(this.app);
     this.io = new Server(this.server);
@@ -66,24 +68,58 @@ class Dashboard {
     });
 
     this.app.get('/api/accounts', auth, async (req, res) => {
-      const accountsDir = path.join(process.cwd(), 'accounts');
       try {
-        const files = await fs.readdir(accountsDir);
-        const accounts = files.filter((f) => f.endsWith('.json')).map((f) => f.replace('.json', ''));
+        const files = await fs.readdir(this.accountsDir);
+        const accounts = files
+          .filter((f) => f.endsWith('.json') && !f.endsWith('.config.json'))
+          .map((f) => f.replace('.json', ''));
         res.json({ accounts });
       } catch {
         res.json({ accounts: [] });
       }
     });
 
-    this.app.get('/api/status', auth, (req, res) => {
-      res.json({ running: req.app.locals.botRunning || false });
+    this.app.get('/api/account-profiles', auth, async (req, res) => {
+      try {
+        const profilesConfig = await loadProfilesConfig(this.accountsDir, this.config);
+        res.json(profilesConfig);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
     });
 
-    this.app.post('/api/control/start', auth, (req, res) => {
-      this.io.emit('control', { action: 'start', data: req.body });
-      this.onControl('start', req.body);
-      res.json({ success: true, message: 'Start command sent' });
+    this.app.get('/api/status', auth, (req, res) => {
+      res.json({
+        running: req.app.locals.botRunning || false,
+        mode: req.app.locals.botMode || 'engage',
+        useAi: req.app.locals.useAi || false,
+        commentMode: req.app.locals.commentMode || 'rule',
+        accountJobs: req.app.locals.accountJobs || [],
+        botState: this.botState || null,
+      });
+    });
+
+    this.app.post('/api/control/start', auth, async (req, res) => {
+      const data = req.body || {};
+      if (data.mode) {
+        this.app.locals.botMode = data.mode;
+        this.app.locals.useAi = !!data.useAi;
+        this.app.locals.commentMode = data.useAi ? 'ai' : 'rule';
+      }
+      if (data.accountJobs?.length) {
+        this.app.locals.botMode = 'multi';
+        this.app.locals.accountJobs = data.accountJobs;
+      }
+      if (this.botState) {
+        this.botState = { ...this.botState, ...data };
+      }
+      this.io.emit('control', { action: 'start', data });
+      try {
+        await this.onControl('start', data);
+        res.json({ success: true, message: 'Start command sent' });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
     });
 
     this.app.post('/api/control/stop', auth, (req, res) => {

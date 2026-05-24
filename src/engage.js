@@ -1,5 +1,5 @@
 const logger = require('./logger');
-const { sleep, randomMs, parseTweetId } = require('./utils');
+const { sleep, randomMs, parseTweetId, parseSocialCount } = require('./utils');
 
 const SELECTORS = {
   tweet: 'article[data-testid="tweet"]',
@@ -43,6 +43,133 @@ class EngagementBot {
     await page.keyboard.type(text, {
       delay: randomMs(this.config.delays.typing.min, this.config.delays.typing.max),
     });
+  }
+
+  /** Tự bấm OK / Accept / Try again trên hộp thoại lỗi Twitter */
+  async dismissTwitterDialogs(page) {
+    try {
+      const clicked = await page.evaluate(() => {
+        let count = 0;
+        const tryClick = (el) => {
+          if (!el || el.disabled) return;
+          el.click();
+          count++;
+        };
+
+        tryClick(document.querySelector('[data-testid="confirmationSheetConfirm"]'));
+
+        const acceptLabels = [
+          'ok',
+          'got it',
+          'accept',
+          'dismiss',
+          'try again',
+          'retry',
+          'understood',
+          'đồng ý',
+          'xong',
+          'tiếp tục',
+          'continue',
+        ];
+        document
+          .querySelectorAll('[role="dialog"] button, [data-testid="sheetDialog"] button')
+          .forEach((btn) => {
+            const t = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+            if (acceptLabels.some((l) => t === l || t.startsWith(`${l} `))) tryClick(btn);
+          });
+
+        document.querySelectorAll('[data-testid="app-bar-close"]').forEach((btn) => {
+          if (btn.closest('[role="dialog"]')) tryClick(btn);
+        });
+
+        return count;
+      });
+      if (clicked > 0) {
+        logger.info(`Đã xác nhận/đóng ${clicked} hộp thoại Twitter`);
+        await sleep(400);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** Gõ từng ký tự, delay ngẫu nhiên giữa các lần nhập (không delay sau khi gõ xong) */
+  async typeWithInputDelays(page, text, delayConfig) {
+    const { min, max } = delayConfig;
+    for (let i = 0; i < text.length; i++) {
+      await page.keyboard.type(text[i], { delay: 0 });
+      if (i < text.length - 1) {
+        await sleep(randomMs(min, max));
+      }
+    }
+  }
+
+  async fillReplyText(page, selector, text, meta = {}) {
+    await page.click(selector);
+    await page.keyboard.down('Control');
+    await page.keyboard.press('KeyA');
+    await page.keyboard.up('Control');
+    await page.keyboard.press('Backspace');
+
+    if (meta.botMode === 'airdrop') {
+      const t = this.config.airdrop?.typing || { min: 5, max: 20 };
+      await this.typeWithInputDelays(page, text, t);
+      return;
+    }
+
+    await this.typeWithInputDelays(page, text, this.config.delays.typing);
+  }
+
+  isRetryableReplyError(error) {
+    const msg = error?.message || '';
+    return (
+      msg.includes('ERR_ABORTED') ||
+      msg.includes('net::ERR') ||
+      msg.includes('Navigation') ||
+      msg.includes('timeout') ||
+      msg.includes('Execution context was destroyed')
+    );
+  }
+
+  normalizeTweetUrl(url) {
+    return String(url || '')
+      .replace(/^https?:\/\/(?:www\.)?(?:twitter|x)\.com/i, 'https://x.com')
+      .split('?')[0]
+      .replace(/\/$/, '');
+  }
+
+  isOnTweetPage(page, tweetUrl) {
+    const target = this.normalizeTweetUrl(tweetUrl);
+    const current = this.normalizeTweetUrl(page.url());
+    return current === target;
+  }
+
+  async gotoTweetPage(page, tweetUrl) {
+    const timeout = this.config.browser?.navigationTimeout || 30000;
+    try {
+      await page.goto(tweetUrl, { waitUntil: 'domcontentloaded', timeout });
+    } catch (error) {
+      try {
+        await page.evaluate(() => window.stop());
+      } catch {
+        /* ignore */
+      }
+      throw error;
+    }
+  }
+
+  async ensureTweetPage(page, tweetUrl, { forceReload = false } = {}) {
+    if (!forceReload && this.isOnTweetPage(page, tweetUrl)) {
+      logger.info('Đã ở trang tweet — bỏ qua goto, reply tiếp');
+      try {
+        await page.evaluate(() => window.stop());
+      } catch {
+        /* ignore */
+      }
+      await this.dismissTwitterDialogs(page);
+      return;
+    }
+    await this.gotoTweetPage(page, tweetUrl);
   }
 
   decideAction() {
@@ -118,6 +245,7 @@ class EngagementBot {
     try {
       await page.goto(tweetUrl, { waitUntil: 'domcontentloaded' });
       await this.randomDelay(2000, 3000);
+      await this.dismissTwitterDialogs(page);
 
       const unlike = await page.$(SELECTORS.unlike);
       if (unlike) return false;
@@ -136,6 +264,8 @@ class EngagementBot {
         interactionType: 'like',
         accountName: this.currentAccount,
         keywordUsed: meta.keyword,
+        walletType: meta.walletType || 'like',
+        botMode: meta.botMode || 'engage',
       });
     } catch (error) {
       logger.error(`Like error: ${error.message}`);
@@ -157,6 +287,7 @@ class EngagementBot {
         this.config.delays.pageLoad?.min || 3000,
         this.config.delays.pageLoad?.max || 6000
       );
+      await this.dismissTwitterDialogs(page);
 
       const alreadyRetweeted = await page.$('[data-testid="unretweet"]');
       if (alreadyRetweeted) {
@@ -193,6 +324,8 @@ class EngagementBot {
         interactionType: 'retweet',
         accountName: this.currentAccount,
         keywordUsed: meta.keyword,
+        walletType: meta.walletType || 'retweet',
+        botMode: meta.botMode || 'engage',
       });
     } catch (error) {
       logger.error(`Retweet error: ${error.message}`);
@@ -200,47 +333,168 @@ class EngagementBot {
     }
   }
 
-  async replyToTweet(page, tweetUrl, replyText, meta) {
-    try {
-      await page.goto(tweetUrl, { waitUntil: 'domcontentloaded' });
-      await this.randomDelay(
-        this.config.delays.pageLoad?.min || 3000,
-        this.config.delays.pageLoad?.max || 6000
-      );
-      logger.info(`AI reply: "${replyText.substring(0, 80)}..."`);
+  async engageBeforeComment(page, tweetUrl, meta) {
+    const engageMeta = { ...meta, botMode: meta.botMode || 'airdrop' };
+    const doLikeRt = meta.engageOnReply !== false;
+    const followAuthor = meta.followOnReply !== false;
+    let count = 0;
 
-      const replyButton = await page.$(SELECTORS.reply);
-      if (!replyButton) return false;
-
-      await replyButton.click();
-      await this.randomDelay(1000, 1500);
-
-      const replyBox = await page.$(SELECTORS.replyBox);
-      if (!replyBox) return false;
-
-      await replyBox.click();
-      await this.humanType(page, SELECTORS.replyBox, replyText);
-      await this.randomDelay(1000, 1500);
-
-      const postButton = await page.$(SELECTORS.tweetButton);
-      if (!postButton) return false;
-
-      await postButton.click();
-      logger.info(`Replied: ${tweetUrl.substring(0, 60)}...`);
-
-      return await this.recordInteraction({
-        tweetId: meta.tweetId,
-        tweetUrl,
-        authorUsername: meta.author,
-        content: meta.content,
-        interactionType: 'reply',
-        accountName: this.currentAccount,
-        keywordUsed: meta.keyword,
-        aiGeneratedReply: replyText,
+    if (
+      doLikeRt &&
+      !(await this.db.hasInteractedWithTweet(meta.tweetId, this.currentAccount, 'like'))
+    ) {
+      const liked = await this.likeTweet(page, tweetUrl, {
+        ...engageMeta,
+        walletType: 'like',
       });
+      if (liked) count++;
+      await this.randomDelay(2000, 4000);
+    }
+
+    if (
+      doLikeRt &&
+      !(await this.db.hasInteractedWithTweet(meta.tweetId, this.currentAccount, 'retweet'))
+    ) {
+      const retweeted = await this.retweet(page, tweetUrl, {
+        ...engageMeta,
+        walletType: 'retweet',
+      });
+      if (retweeted) count++;
+      await this.randomDelay(2000, 4000);
+    }
+
+    if (followAuthor && meta.author) {
+      const followed = await this.followUser(page, meta.author, {
+        ...engageMeta,
+        walletType: 'follow',
+        minFollowersToFollow: meta.minFollowersToFollow,
+      });
+      if (followed) count++;
+    }
+
+    return count;
+  }
+
+  /** @deprecated use engageBeforeComment */
+  async likeAndRetweetTweet(page, tweetUrl, meta) {
+    return this.engageBeforeComment(page, tweetUrl, meta);
+  }
+
+  async replyToTweet(page, tweetUrl, replyText, meta) {
+    const maxAttempts = 2;
+    const reusePage = !!meta.reuseTweetPage;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        if (reusePage && attempt === 1) {
+          await this.ensureTweetPage(page, tweetUrl);
+        } else {
+          await this.ensureTweetPage(page, tweetUrl, { forceReload: attempt > 1 });
+        }
+
+        const loadMin = reusePage ? 800 : this.config.delays.pageLoad?.min || 3000;
+        const loadMax = reusePage ? 1500 : this.config.delays.pageLoad?.max || 6000;
+        await this.randomDelay(loadMin, loadMax);
+        await this.dismissTwitterDialogs(page);
+
+        logger.info(`Reply: "${replyText.substring(0, 80)}..."`);
+
+        const replyButton = await page.$(SELECTORS.reply);
+        if (!replyButton) {
+          await this.dismissTwitterDialogs(page);
+          return false;
+        }
+
+        await replyButton.click();
+        await this.randomDelay(800, 1200);
+        await this.dismissTwitterDialogs(page);
+
+        const replyBox = await page.$(SELECTORS.replyBox);
+        if (!replyBox) return false;
+
+        await replyBox.click();
+        await this.fillReplyText(page, SELECTORS.replyBox, replyText, meta);
+        await this.dismissTwitterDialogs(page);
+
+        const postButton = await page.$(SELECTORS.tweetButton);
+        if (!postButton) return false;
+
+        await postButton.click();
+        if (meta.botMode !== 'airdrop') {
+          await this.randomDelay(1500, 2500);
+        } else {
+          await sleep(400);
+        }
+        await this.dismissTwitterDialogs(page);
+        logger.info(`Replied: ${tweetUrl.substring(0, 60)}...`);
+
+        return await this.recordInteraction({
+          tweetId: meta.tweetId,
+          tweetUrl,
+          authorUsername: meta.author,
+          content: meta.content,
+          interactionType: 'reply',
+          accountName: this.currentAccount,
+          keywordUsed: meta.keyword,
+          aiGeneratedReply: replyText,
+          walletType: meta.walletType || 'engage',
+          botMode: meta.botMode || 'engage',
+          commentMode: meta.commentMode,
+        });
+      } catch (error) {
+        await this.dismissTwitterDialogs(page);
+        if (attempt < maxAttempts && this.isRetryableReplyError(error)) {
+          logger.warn(`Reply thử lại (${attempt + 1}/${maxAttempts}): ${error.message}`);
+          await sleep(2000);
+          continue;
+        }
+        logger.error(`Reply error: ${error.message}`);
+        return false;
+      }
+    }
+
+    return false;
+  }
+
+  resolveMinFollowers(meta) {
+    const fromMeta = meta?.minFollowersToFollow;
+    if (fromMeta !== undefined && fromMeta !== null) return Number(fromMeta);
+    return (
+      this.config.airdrop?.minFollowersToFollow ??
+      this.config.follow?.minFollowers ??
+      0
+    );
+  }
+
+  async getUserFollowerCount(page, username) {
+    try {
+      const raw = await page.evaluate(() => {
+        const link =
+          document.querySelector(`a[href="/${location.pathname.split('/')[1]}/followers"]`) ||
+          document.querySelector('a[href$="/followers"]');
+        if (link) return link.innerText || link.textContent || '';
+
+        const header = document.querySelector('[data-testid="UserProfileHeader_Items"]');
+        return header ? header.innerText || header.textContent || '' : '';
+      });
+
+      const followerMatch = raw.match(/([\d.,]+\s*[KkMmBb]?)\s*(followers?|người\s*theo\s*dõi)/i);
+      if (followerMatch) {
+        const n = parseSocialCount(followerMatch[1]);
+        if (n !== null) return n;
+      }
+
+      const parts = raw.split(/\s+/).filter(Boolean);
+      for (const part of parts) {
+        const n = parseSocialCount(part);
+        if (n !== null && n > 0) return n;
+      }
+
+      logger.warn(`@${username}: không đọc được số followers từ profile`);
+      return null;
     } catch (error) {
-      logger.error(`Reply error: ${error.message}`);
-      return false;
+      logger.warn(`@${username}: lỗi đọc followers — ${error.message}`);
+      return null;
     }
   }
 
@@ -252,6 +506,25 @@ class EngagementBot {
 
       await page.goto(`${this.baseUrl}/${username}`, { waitUntil: 'domcontentloaded' });
       await this.randomDelay(2000, 3000);
+      await this.dismissTwitterDialogs(page);
+
+      const minFollowers = this.resolveMinFollowers(meta);
+      if (minFollowers > 0) {
+        const followers = await this.getUserFollowerCount(page, username);
+        if (followers === null) {
+          logger.info(`Skip follow @${username}: không đọc được số followers`);
+          return false;
+        }
+        if (followers < minFollowers) {
+          logger.info(
+            `Skip follow @${username}: ${followers.toLocaleString()} followers < ${minFollowers.toLocaleString()}`
+          );
+          return false;
+        }
+        logger.info(
+          `@${username}: ${followers.toLocaleString()} followers (>= ${minFollowers.toLocaleString()})`
+        );
+      }
 
       const followButton = await page.$(SELECTORS.follow);
       if (!followButton) return false;
@@ -279,6 +552,8 @@ class EngagementBot {
         interactionType: 'follow',
         accountName: this.currentAccount,
         keywordUsed: meta.keyword,
+        walletType: meta.walletType || 'follow',
+        botMode: meta.botMode || 'engage',
       });
     } catch (error) {
       logger.error(`Follow error: ${error.message}`);

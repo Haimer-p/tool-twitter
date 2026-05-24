@@ -16,9 +16,12 @@ const interactedTweetSchema = new mongoose.Schema({
   accountName: { type: String, required: true },
   keywordUsed: { type: String },
   aiGeneratedReply: { type: String },
+  walletType: { type: String, default: 'engage' },
+  botMode: { type: String, enum: ['engage', 'airdrop'], default: 'engage' },
+  commentMode: { type: String, enum: ['rule', 'ai'] },
 });
 
-interactedTweetSchema.index({ tweetId: 1, accountName: 1 }, { unique: true });
+interactedTweetSchema.index({ tweetId: 1, accountName: 1, walletType: 1 }, { unique: true });
 
 const followedUserSchema = new mongoose.Schema({
   userId: { type: String, required: true },
@@ -98,6 +101,7 @@ class Database {
       try {
         await mongoose.connect(this.uri, options);
         this.connected = true;
+        await InteractedTweet.syncIndexes();
         logger.info('MongoDB connected successfully');
         return;
       } catch (error) {
@@ -121,7 +125,11 @@ class Database {
     logger.info('MongoDB disconnected');
   }
 
-  async hasInteractedWithTweet(tweetId, accountName) {
+  async hasInteractedWithTweet(tweetId, accountName, walletType = null) {
+    if (walletType) {
+      const exists = await InteractedTweet.findOne({ tweetId, accountName, walletType });
+      return !!exists;
+    }
     const exists = await InteractedTweet.findOne({ tweetId, accountName });
     return !!exists;
   }

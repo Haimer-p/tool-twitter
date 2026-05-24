@@ -53,7 +53,8 @@
     .activity-action { font-weight: 600; color: #333; }
     .activity-target { color: #666; font-size: 12px; margin-top: 4px; word-break: break-all; }
     .activity-time { color: #999; font-size: 12px; }
-    .control-panel { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+    .control-panel { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; align-items: center; }
+    .mode-select { padding: 10px; border-radius: 8px; border: 1px solid #ddd; font-size: 14px; }
     .btn {
       padding: 12px 30px; border: none; border-radius: 8px;
       font-size: 16px; font-weight: 600; cursor: pointer;
@@ -70,6 +71,8 @@
     <div class="header">
       <h1>Twitter Bot Dashboard</h1>
       <p>Giám sát và điều khiển bot tương tác Twitter/X</p>
+      <p id="botModeInfo" style="color:#555;font-size:14px;margin-top:8px">Mode: --</p>
+      <div id="accountJobsList" style="font-size:13px;color:#666;margin-top:8px;max-height:120px;overflow-y:auto"></div>
       <div class="auth-box" id="authBox">
         <input type="text" id="authUser" placeholder="Username" value="admin">
         <input type="password" id="authPass" placeholder="Password" value="admin123">
@@ -97,7 +100,16 @@
     </div>
 
     <div class="control-panel">
-      <button class="btn btn-start" onclick="controlBot('start')">Chạy bot</button>
+      <select id="botMode" class="mode-select">
+        <option value="engage">Engage (cũ)</option>
+        <option value="airdrop">Airdrop Hunter</option>
+      </select>
+      <select id="commentMode" class="mode-select">
+        <option value="rule">Rule (không AI)</option>
+        <option value="ai">AI (Gemini)</option>
+      </select>
+      <button class="btn btn-start" style="background:#9b59b6" onclick="loadProfiles()">Tải profiles</button>
+      <button class="btn btn-start" onclick="controlBot('start')">Chạy tất cả (song song)</button>
       <button class="btn btn-stop" onclick="controlBot('stop')">Dừng bot</button>
     </div>
     <div class="refresh-time" id="refreshTime">Cập nhật: --</div>
@@ -187,13 +199,92 @@
       document.getElementById('refreshTime').textContent = 'Cập nhật: ' + formatTime(data.timestamp);
     }
 
+    let cachedProfiles = null;
+
+    function renderAccountJobs(jobs) {
+      const el = document.getElementById('accountJobsList');
+      if (!jobs?.length) {
+        el.innerHTML = '<span>Chưa có cấu hình account — bấm "Tải profiles"</span>';
+        return;
+      }
+      el.innerHTML = jobs.map((j) =>
+        `<div>• <b>${j.accountName}</b>: ${j.mode}${j.mode === 'airdrop' ? ` (${j.useAi ? 'AI' : 'Rule'})` : ''} — ${(j.keywords || []).slice(0, 2).join(', ')}</div>`
+      ).join('');
+    }
+
+    async function loadProfiles() {
+      try {
+        cachedProfiles = await apiFetch('/api/account-profiles');
+        const accounts = await apiFetch('/api/accounts');
+        const profileMap = new Map((cachedProfiles.accounts || []).map((a) => [a.name, a]));
+        const jobs = (accounts.accounts || []).map((name) => {
+          const p = profileMap.get(name) || {};
+          if (p.enabled === false) return null;
+          return {
+            accountName: name,
+            mode: p.mode || document.getElementById('botMode').value,
+            useAi: p.useAi ?? (document.getElementById('commentMode').value === 'ai'),
+            keywords: p.keywords?.length ? p.keywords : ['airdrop'],
+          };
+        }).filter(Boolean);
+        renderAccountJobs(jobs);
+        window._pendingJobs = jobs;
+        window._maxParallel = cachedProfiles.maxParallel || 3;
+      } catch (e) {
+        alert('Không tải được profiles. Kiểm tra accounts/accounts.config.json');
+      }
+    }
+
+    function updateModeDisplay(status) {
+      const mode = status?.mode || 'engage';
+      const commentMode = status?.commentMode || (status?.useAi ? 'ai' : 'rule');
+      const running = status?.running ? ' (đang chạy)' : '';
+      const jobs = status?.accountJobs || [];
+      let label =
+        mode === 'multi'
+          ? `Multi-account (${jobs.length} acc)`
+          : mode === 'airdrop'
+            ? `Airdrop · ${commentMode === 'ai' ? 'AI' : 'Rule'}`
+            : 'Engage';
+      document.getElementById('botModeInfo').textContent = `Mode: ${label}${running}`;
+      if (jobs.length) renderAccountJobs(jobs);
+      if (mode !== 'multi') {
+        document.getElementById('botMode').value = mode === 'multi' ? 'engage' : mode;
+      }
+      document.getElementById('commentMode').value = commentMode;
+      document.getElementById('commentMode').disabled =
+        mode !== 'airdrop' && mode !== 'multi';
+    }
+
+    async function fetchStatus() {
+      try {
+        const status = await apiFetch('/api/status');
+        updateModeDisplay(status);
+      } catch (_) {}
+    }
+
     async function controlBot(action) {
+      const body = {};
+      if (action === 'start') {
+        if (window._pendingJobs?.length) {
+          body.accountJobs = window._pendingJobs;
+          body.maxParallel = window._maxParallel || 3;
+        } else {
+          body.mode = document.getElementById('botMode').value;
+          body.useAi = document.getElementById('commentMode').value === 'ai';
+        }
+      }
       await fetch('/api/control/' + action, {
         method: 'POST',
         headers: { Authorization: getAuthHeader(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify(body),
       });
+      if (action === 'start') fetchStatus();
     }
+
+    document.getElementById('botMode').addEventListener('change', (e) => {
+      document.getElementById('commentMode').disabled = e.target.value !== 'airdrop';
+    });
 
     function initSocket() {
       if (socket) socket.disconnect();
@@ -205,6 +296,7 @@
       try {
         const stats = await apiFetch('/api/stats');
         const activities = await apiFetch('/api/activities?limit=20');
+        await fetchStatus();
         updateDashboard({ stats: stats.totals, chartData: stats.stats, recentActivities: activities, timestamp: new Date() });
       } catch (e) {
         document.getElementById('activityList').innerHTML = '<div style="color:#c0392b;padding:20px">Cần đăng nhập đúng user/password (mặc định admin / admin123)</div>';
