@@ -303,6 +303,55 @@ Log khi bỏ qua: `Skip follow @user: 120 followers < min 500`
 
 ---
 
+## Comment AI — tỷ lệ & nội dung bắt buộc
+
+### Tăng tỷ lệ comment
+
+Chỉnh `comboRatios` — các key có **reply** quyết định % comment:
+
+| Key | Có comment? |
+|-----|-------------|
+| `reply` | Chỉ comment |
+| `like_reply` | Like + comment |
+| `like_retweet_reply` | Like + RT + comment |
+
+Mặc định hiện tại (~62% lần có comment): `reply` 18% + `like_reply` 32% + `like_retweet_reply` 12%.
+
+### Link / từ khóa bắt buộc trong mỗi comment
+
+Trong `defaults.interactions` hoặc từng account:
+
+```json
+"replyRequiredIncludes": [
+  "https://dexscreener.com/solana/9gs19u3zuy8m4ujqoztv1xa6fnu6j9zguze8jypey9dp",
+  "ZECBankcoin"
+],
+"replyMaxLength": 275
+```
+
+- AI được yêu cầu **nhúng tự nhiên** tất cả chuỗi trên.
+- Nếu AI quên, bot **tự thêm** ở cuối comment (vẫn trong giới hạn ký tự).
+- Mỗi account có thể có `replyRequiredIncludes` riêng (ghi đè `defaults`).
+
+Ví dụ chỉ account `acckingchiton` gắn link:
+
+```json
+{
+  "name": "acckingchiton",
+  "interactions": {
+    "replyRequiredIncludes": [
+      "https://dexscreener.com/solana/9gs19u3zuy8m4ujqoztv1xa6fnu6j9zguze8jypey9dp"
+    ]
+  }
+}
+```
+
+Account khác để `replyRequiredIncludes: []` hoặc bỏ trống để không gắn link.
+
+**Restart bot** sau khi sửa config.
+
+---
+
 ## AI (Gemini / DeepSeek)
 
 - Reply tự động dùng AI khi combo có `reply` hoặc `like_reply`, `like_retweet_reply`.

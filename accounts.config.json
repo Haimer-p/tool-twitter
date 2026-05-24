@@ -4,14 +4,21 @@
   },
   "defaults": {
     "keywords": [
-      "crypto",
-      "bitcoin",
-      "ethereum",
       "web3",
       "blockchain",
       "defi",
+      "decentralized",
+      "crypto",
+      "ethereum",
+      "bitcoin",
       "nft",
-      "solana"
+      "dao",
+      "smart contract",
+      "layer 2",
+      "onchain",
+      "metaverse",
+      "dapp",
+      "altcoin"
     ],
     "delays": {
       "betweenActions": { "min": 90000, "max": 180000 },
@@ -19,41 +26,155 @@
     },
     "interactions": {
       "maxPerDay": 50,
-      "maxPerAccountPerRun": 15,
-      "keywordsPerRun": 6,
+      "maxPerAccountPerRun": 500,
+      "keywordsPerRun": 8,
       "tweetsPerKeyword": 8,
       "followMinFollowers": 1000,
-      "followMaxFollowers": 0,
+      "followMaxFollowers": 10000000,
+      "replyMaxLength": 275,
+      "replyRequiredIncludes": [
+        "https://dexscreener.com/solana/7kvy3gccagyuos9wtmf447uvpnfonc6fs1p36r8bdgrd",
+        "OMEN"
+      ],
       "comboRatios": {
-        "like": 0.08,
-        "retweet": 0.12,
-        "reply": 0.12,
-        "follow": 0.08,
-        "like_retweet": 0.18,
-        "like_reply": 0.18,
-        "like_retweet_reply": 0.08,
-        "like_follow": 0.1,
-        "like_retweet_follow": 0.06
+        "like": 0.03,
+        "retweet": 0.05,
+        "reply": 0.22,
+        "follow": 0.03,
+        "like_retweet": 0.08,
+        "like_reply": 0.4,
+        "like_retweet_reply": 0.12,
+        "like_follow": 0.03,
+        "like_retweet_follow": 0.04
       }
     }
   },
   "accounts": [
     {
-      "name": "acckingchiton",
+      "name": "accquangkhai",
       "enabled": true,
-      "keywords": ["solana", "memecoin", "airdrop","IRYNA", "trading crypto", "2LsescRjhcxoUwEQLpcsd3Gh6AHUyqEHANDakkoSpump", "Justice for Iryna", "JusticeforIryna Sol Community","NINJA" ],
+      "keywords": [
+        "OMEN",
+        "$OMEN",
+        "OMEN solana",
+        "OMEN pump",
+        "OMEN memecoin",
+        "omendotfun",
+        "omen.fun",
+        "7xnopcDeghj9QTMYmKSjhJRbNvKmfnj1Qci721qrpump",
+        "OMEN chart",
+        "solana OMEN",
+        "pumpswap OMEN",
+        "OMEN token"
+      ],
       "delays": {
-        "betweenActions": { "min": 60000, "max": 120000 }
+        "betweenActions": { "min": 30000, "max": 60000 },
+        "betweenSearchRounds": { "min": 180000, "max": 300000 }
       },
       "interactions": {
-        "maxPerDay": 30,
-        "maxPerAccountPerRun": 10
+        "maxPerDay": 300,
+        "maxPerAccountPerRun": 500,
+        "keywordsPerRun": 10,
+        "replyRequiredIncludes": [
+          "https://dexscreener.com/solana/7kvy3gccagyuos9wtmf447uvpnfonc6fs1p36r8bdgrd",
+          "OMEN"
+        ],
+        "comboRatios": {
+          "like": 0.03,
+          "retweet": 0.05,
+          "reply": 0.22,
+          "follow": 0.03,
+          "like_retweet": 0.08,
+          "like_reply": 0.4,
+          "like_retweet_reply": 0.12,
+          "like_follow": 0.03,
+          "like_retweet_follow": 0.04
+        }
       }
     },
     {
       "name": "accnhattan",
       "enabled": true,
-      "keywords": ["IRYNA", "trading crypto", "2LsescRjhcxoUwEQLpcsd3Gh6AHUyqEHANDakkoSpump", "Justice for Iryna", "JusticeforIryna Sol Community","NINJA","Iryna Zarutska is a hero" ]
+      "keywords": [
+        "OMEN",
+        "$OMEN",
+        "OMEN solana",
+        "OMEN pump",
+        "OMEN memecoin",
+        "omendotfun",
+        "omen.fun",
+        "7xnopcDeghj9QTMYmKSjhJRbNvKmfnj1Qci721qrpump",
+        "OMEN chart",
+        "solana OMEN",
+        "pumpswap OMEN",
+        "OMEN token"
+      ],
+      "delays": {
+        "betweenActions": { "min": 30000, "max": 60000 },
+        "betweenSearchRounds": { "min": 180000, "max": 300000 }
+      },
+      "interactions": {
+        "maxPerDay": 300,
+        "maxPerAccountPerRun": 500,
+        "keywordsPerRun": 10,
+        "replyRequiredIncludes": [
+          "https://dexscreener.com/solana/7kvy3gccagyuos9wtmf447uvpnfonc6fs1p36r8bdgrd",
+          "OMEN"
+        ],
+        "comboRatios": {
+          "like": 0.03,
+          "retweet": 0.05,
+          "reply": 0.22,
+          "follow": 0.03,
+          "like_retweet": 0.08,
+          "like_reply": 0.4,
+          "like_retweet_reply": 0.12,
+          "like_follow": 0.03,
+          "like_retweet_follow": 0.04
+        }
+      }
+    },
+    {
+      "name": "acckingchiton",
+      "enabled": true,
+      "keywords": [
+        "OMEN",
+        "$OMEN",
+        "OMEN solana",
+        "OMEN pump",
+        "OMEN memecoin",
+        "omendotfun",
+        "omen.fun",
+        "7xnopcDeghj9QTMYmKSjhJRbNvKmfnj1Qci721qrpump",
+        "OMEN chart",
+        "solana OMEN",
+        "pumpswap OMEN",
+        "OMEN token"
+      ],
+      "delays": {
+        "betweenActions": { "min": 30000, "max": 60000 },
+        "betweenSearchRounds": { "min": 180000, "max": 300000 }
+      },
+      "interactions": {
+        "maxPerDay": 300,
+        "maxPerAccountPerRun": 500,
+        "keywordsPerRun": 10,
+        "replyRequiredIncludes": [
+          "https://dexscreener.com/solana/7kvy3gccagyuos9wtmf447uvpnfonc6fs1p36r8bdgrd",
+          "OMEN"
+        ],
+        "comboRatios": {
+          "like": 0.03,
+          "retweet": 0.05,
+          "reply": 0.22,
+          "follow": 0.03,
+          "like_retweet": 0.08,
+          "like_reply": 0.4,
+          "like_retweet_reply": 0.12,
+          "like_follow": 0.03,
+          "like_retweet_follow": 0.04
+        }
+      }
     }
   ]
 }

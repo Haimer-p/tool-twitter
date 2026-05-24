@@ -68,13 +68,26 @@ test('comboRatios sum to 1', () => {
   assert.ok(Math.abs(sum - 1) < 0.001, `sum=${sum}`);
 });
 
+console.log('\n=== AIService reply required includes ===');
+const AIService = require('../src/ai');
+const aiTest = new AIService(config);
+test('finalizeReply appends missing link', () => {
+  const out = aiTest.finalizeReply('Nice chart', {
+    requiredIncludes: ['https://dexscreener.com/solana/test'],
+    maxLength: 275,
+  });
+  assert.ok(out.includes('dexscreener.com'));
+  assert.ok(out.includes('Nice chart'));
+});
+
 console.log('\n=== EngagementBot.decideActionCombo ===');
 const EngagementBot = require('../src/engage');
 const mockBot = new EngagementBot({}, {}, {}, {}, config);
 const VALID_ACTIONS = new Set(['like', 'retweet', 'reply', 'follow']);
 test('decideActionCombo returns valid action arrays', () => {
+  const ratios = config.interactions.comboRatios;
   for (let i = 0; i < 200; i++) {
-    const combo = mockBot.decideActionCombo();
+    const combo = mockBot.decideActionCombo(ratios);
     assert.ok(Array.isArray(combo) && combo.length > 0);
     for (const action of combo) {
       assert.ok(VALID_ACTIONS.has(action), `invalid action: ${action}`);

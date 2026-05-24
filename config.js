@@ -20,16 +20,21 @@ module.exports = {
     followMinFollowers: parseInt(process.env.FOLLOW_MIN_FOLLOWERS || '0', 10),
     // Tùy chọn: bỏ qua nếu quá nhiều follower (0 = không giới hạn trên)
     followMaxFollowers: parseInt(process.env.FOLLOW_MAX_FOLLOWERS || '0', 10) || null,
+    // true = vẫn follow nếu không đọc được số follower trên profile
+    followAllowIfUnreadable: process.env.FOLLOW_ALLOW_IF_UNREADABLE === 'true',
+    replyMaxLength: 275,
+    // Mỗi comment AI phải chứa đủ các chuỗi sau (link, từ khóa…)
+    replyRequiredIncludes: [],
     comboRatios: {
-      like: 0.08,
-      retweet: 0.12,
-      reply: 0.12,
-      follow: 0.08,
-      like_retweet: 0.18,
-      like_reply: 0.18,
-      like_retweet_reply: 0.08,
-      like_follow: 0.1,
-      like_retweet_follow: 0.06,
+      like: 0.05,
+      retweet: 0.08,
+      reply: 0.18,
+      follow: 0.05,
+      like_retweet: 0.1,
+      like_reply: 0.32,
+      like_retweet_reply: 0.12,
+      like_follow: 0.05,
+      like_retweet_follow: 0.05,
     },
   },
 
@@ -43,6 +48,8 @@ module.exports = {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     viewport: { width: 1280, height: 800 },
     proxy: process.env.PROXY_SERVER || null,
+    navigationTimeout: parseInt(process.env.NAVIGATION_TIMEOUT || '60000', 10),
+    navigationRetries: parseInt(process.env.NAVIGATION_RETRIES || '2', 10),
   },
 
   gemini: {
@@ -55,7 +62,7 @@ module.exports = {
     baseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
     model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
     temperature: 0.9,
-    maxTokens: 150,
+    maxTokens: 220,
   },
 
   // alternate | gemini | deepseek

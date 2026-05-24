@@ -24,16 +24,20 @@
       "tweetsPerKeyword": 8,
       "followMinFollowers": 500,
       "followMaxFollowers": 0,
+      "replyMaxLength": 275,
+      "replyRequiredIncludes": [
+        "https://dexscreener.com/solana/9gs19u3zuy8m4ujqoztv1xa6fnu6j9zguze8jypey9dp"
+      ],
       "comboRatios": {
-        "like": 0.08,
-        "retweet": 0.12,
-        "reply": 0.12,
-        "follow": 0.08,
-        "like_retweet": 0.18,
-        "like_reply": 0.18,
-        "like_retweet_reply": 0.08,
-        "like_follow": 0.1,
-        "like_retweet_follow": 0.06
+        "like": 0.05,
+        "retweet": 0.08,
+        "reply": 0.18,
+        "follow": 0.05,
+        "like_retweet": 0.1,
+        "like_reply": 0.32,
+        "like_retweet_reply": 0.12,
+        "like_follow": 0.05,
+        "like_retweet_follow": 0.05
       }
     }
   },

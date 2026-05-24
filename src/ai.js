@@ -19,23 +19,81 @@ class AIService {
     }
   }
 
-  buildPrompt(tweetText, tweetAuthor, context) {
+  normalizeReplyOptions(replyOptions = {}) {
+    const global = this.config.interactions || {};
+    const required = replyOptions.requiredIncludes ?? global.replyRequiredIncludes ?? [];
+    const includes = Array.isArray(required)
+      ? required.filter((s) => s && String(s).trim())
+      : [String(required).trim()].filter(Boolean);
+
+    return {
+      requiredIncludes: includes,
+      maxLength: replyOptions.maxLength ?? global.replyMaxLength ?? 275,
+    };
+  }
+
+  buildPrompt(tweetText, tweetAuthor, context, replyOptions = {}) {
+    const { requiredIncludes, maxLength } = this.normalizeReplyOptions(replyOptions);
+    const hasRequired = requiredIncludes.length > 0;
+
+    const requiredBlock = hasRequired
+      ? `
+MANDATORY — reply MUST include ALL of these strings exactly (copy-paste as given):
+${requiredIncludes.map((s) => `- ${s}`).join('\n')}
+Weave them in naturally (e.g. "chart looking good" + link on new line). Do NOT omit any.
+`
+      : '';
+
+    const linkRule = hasRequired
+      ? '- Links are allowed when listed in MANDATORY above'
+      : '- No links unless part of mandatory includes';
+
     return `
 You are a crypto Twitter user. Write a short, natural comment/reply on this tweet.
 
 Tweet from @${tweetAuthor}: "${tweetText}"
 ${context ? `Context: ${context}` : ''}
-
+${requiredBlock}
 Rules:
-- 1-2 sentences max, under 200 characters
-- Reference crypto/blockchain/DeFi/NFT when relevant
+- 1-2 sentences plus mandatory includes; stay under ${maxLength} characters total
+- Reference crypto/blockchain/DeFi/Solana when relevant to the tweet
 - Add a genuine opinion or question (not generic praise)
-- No hashtags spam, no "DM me", no links
+${linkRule}
+- No hashtag spam, no "DM me"
 - Sound like a real person, casual tone
 - Max 1 emoji if it fits
 
 Return ONLY the reply text.
 `.trim();
+  }
+
+  finalizeReply(text, replyOptions = {}) {
+    const { requiredIncludes, maxLength } = this.normalizeReplyOptions(replyOptions);
+    let result = (text || '').trim().replace(/^["']|["']$/g, '');
+
+    const missing = requiredIncludes.filter(
+      (req) => !result.toLowerCase().includes(String(req).toLowerCase())
+    );
+
+    if (missing.length > 0) {
+      const suffix = missing.join(' ');
+      const sep = result.length > 0 && !result.endsWith('\n') ? '\n' : '';
+      result = `${result}${sep}${suffix}`.trim();
+      logger.info(`Reply appended required: ${missing.length} item(s)`);
+    }
+
+    if (result.length > maxLength) {
+      const requiredText = requiredIncludes.join(' ');
+      const reserved = requiredText.length + 4;
+      if (requiredIncludes.length > 0 && reserved < maxLength) {
+        const mainMax = maxLength - reserved;
+        result = `${result.slice(0, mainMax).trim()}… ${requiredText}`;
+      } else {
+        result = result.slice(0, maxLength);
+      }
+    }
+
+    return result.trim();
   }
 
   getEnabledProviders() {
@@ -62,7 +120,6 @@ Return ONLY the reply text.
       return enabled.includes('deepseek') ? ['deepseek'] : enabled;
     }
 
-    // alternate: luân phiên gemini ↔ deepseek mỗi reply
     this.replyCount += 1;
     if (enabled.length === 1) return enabled;
 
@@ -144,24 +201,27 @@ Return ONLY the reply text.
     );
   }
 
-  async generateReply(tweetText, tweetAuthor, context = '') {
-    const prompt = this.buildPrompt(tweetText, tweetAuthor, context);
+  async generateReply(tweetText, tweetAuthor, context = '', replyOptions = {}) {
+    const prompt = this.buildPrompt(tweetText, tweetAuthor, context, replyOptions);
     const providers = this.getProviderOrder();
 
     if (providers.length === 0) {
       logger.error('No AI provider configured (GEMINI_API_KEY or DEEPSEEK_API_KEY)');
-      return this.fallbackReply(tweetText);
+      return this.finalizeReply(this.fallbackReply(tweetText), replyOptions);
     }
 
     logger.info(`AI providers this reply: ${providers.join(' → ')}`);
 
     for (const provider of providers) {
       try {
+        let raw;
         if (provider === 'gemini') {
-          return await this.generateGemini(prompt);
+          raw = await this.generateGemini(prompt);
+        } else if (provider === 'deepseek') {
+          raw = await this.generateDeepSeek(prompt);
         }
-        if (provider === 'deepseek') {
-          return await this.generateDeepSeek(prompt);
+        if (raw) {
+          return this.finalizeReply(raw, replyOptions);
         }
       } catch (error) {
         logger.warn(`${provider} failed: ${error.message?.slice(0, 120)}`);
@@ -169,15 +229,14 @@ Return ONLY the reply text.
     }
 
     logger.error('All AI providers failed — using fallback reply');
-    return this.fallbackReply(tweetText);
+    return this.finalizeReply(this.fallbackReply(tweetText), replyOptions);
   }
 
   fallbackReply(tweetText) {
     const fallbacks = [
-      `Thanks for sharing this! Really interesting perspective on ${this.extractTopic(tweetText)}`,
-      'Great point! Web3 needs more discussions like this',
-      "I've been following this closely. Thanks for the update!",
-      'This is why I love the Web3 space - always learning something new',
+      `Interesting take on ${this.extractTopic(tweetText)} — watching this closely`,
+      'Solid point, the on-chain data will tell us soon',
+      'Been tracking this narrative, thanks for sharing',
     ];
     return fallbacks[Math.floor(Math.random() * fallbacks.length)];
   }
@@ -188,7 +247,7 @@ Return ONLY the reply text.
     for (const kw of keywords) {
       if (lower.includes(kw)) return kw;
     }
-    return 'this topic';
+    return 'this';
   }
 }
 
