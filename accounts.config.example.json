@@ -25,6 +25,8 @@
       "followMinFollowers": 500,
       "followMaxFollowers": 0,
       "replyMaxLength": 275,
+      "replyComposerTimeoutMs": 15000,
+      "replyPostTimeoutMs": 20000,
       "replyRequiredIncludes": [
         "https://dexscreener.com/solana/9gs19u3zuy8m4ujqoztv1xa6fnu6j9zguze8jypey9dp"
       ],

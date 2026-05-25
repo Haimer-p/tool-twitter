@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const logger = require('./logger');
 const BrowserManager = require('./browser');
 const { sleep, randomMs, parseTweetId, parseFollowerCount } = require('./utils');
@@ -13,10 +15,17 @@ const SELECTORS = {
   reply: 'button[data-testid="reply"]',
   replyBox: 'div[data-testid="tweetTextarea_0"]',
   tweetButton: 'button[data-testid="tweetButton"]',
+  postButton: 'button[data-testid="tweetButton"], button[data-testid="tweetButtonInline"]',
   follow: '[data-testid$="-follow"]:not([data-testid*="unfollow"])',
   unfollow: 'button[data-testid$="-unfollow"]',
   unfollowConfirm: 'button[data-testid="confirmationSheetConfirm"]',
 };
+
+/** Used inside page.evaluate — comma selectors are unreliable there */
+const POST_BUTTON_IN_PAGE = [
+  'button[data-testid="tweetButton"]',
+  'button[data-testid="tweetButtonInline"]',
+].join(', ');
 
 const COMBO_MAP = {
   like: ['like'],
@@ -134,6 +143,101 @@ class EngagementBot {
       requiredIncludes: i.replyRequiredIncludes,
       maxLength: i.replyMaxLength,
     };
+  }
+
+  getReplyTimeouts(ctx) {
+    const i = ctx.interactions;
+    const g = this.config.interactions;
+    return {
+      composer: i.replyComposerTimeoutMs ?? g.replyComposerTimeoutMs ?? 15000,
+      post: i.replyPostTimeoutMs ?? g.replyPostTimeoutMs ?? 20000,
+    };
+  }
+
+  async diagnoseReplyFailure(page, ctx, meta, errorMessage) {
+    const diagnosis = await page
+      .evaluate((postSel, replyBoxSel) => {
+        const box = document.querySelector(replyBoxSel);
+        const editable =
+          box?.closest('[contenteditable="true"]') ||
+          box?.querySelector('[contenteditable="true"]') ||
+          box;
+        const textLen = (editable?.textContent || '').trim().length;
+        const btn = document.querySelector(postSel);
+        let postBtnState = 'missing';
+        if (btn) {
+          const disabled = btn.disabled || btn.getAttribute('aria-disabled') === 'true';
+          postBtnState = disabled ? 'disabled' : 'enabled';
+        }
+        const alerts = [];
+        for (const el of document.querySelectorAll('[data-testid="toast"], [role="alert"]')) {
+          const t = (el.textContent || '').trim();
+          if (t) alerts.push(t.slice(0, 120));
+        }
+        const bodyText = document.body?.innerText?.toLowerCase() || '';
+        const restrictedHint =
+          bodyText.includes('who can reply') ||
+          bodyText.includes("can't reply") ||
+          bodyText.includes('replying is limited');
+        return {
+          hasBox: !!box,
+          textLen,
+          postBtnState,
+          alertText: alerts.slice(0, 3).join(' | ') || null,
+          restrictedHint,
+          errorMessage: errorMessage?.slice(0, 120) || null,
+        };
+      }, POST_BUTTON_IN_PAGE, SELECTORS.replyBox)
+      .catch(() => ({ evaluateFailed: true, errorMessage }));
+
+    logger.warn(`[${ctx.accountName}] replyDiagnosis: ${JSON.stringify(diagnosis)}`);
+
+    const headless = this.config.browser?.headless;
+    if (headless !== true && meta?.tweetId) {
+      try {
+        const logsDir = path.join(process.cwd(), 'logs');
+        fs.mkdirSync(logsDir, { recursive: true });
+        const file = path.join(logsDir, `reply-fail-${ctx.accountName}-${meta.tweetId}.png`);
+        await page.screenshot({ path: file });
+        logger.info(`[${ctx.accountName}] Reply fail screenshot: ${file}`);
+      } catch {
+        /* optional */
+      }
+    }
+
+    return diagnosis;
+  }
+
+  async canReplyOnPage(page) {
+    return page
+      .evaluate((replySel) => {
+        const btn = document.querySelector(replySel);
+        if (!btn) return { canReply: false, reason: 'no_reply_button' };
+        if (btn.getAttribute('aria-disabled') === 'true' || btn.disabled) {
+          return { canReply: false, reason: 'reply_disabled' };
+        }
+        const text = document.body?.innerText?.toLowerCase() || '';
+        if (
+          text.includes("can't reply") ||
+          text.includes('replying is limited') ||
+          text.includes('who can reply')
+        ) {
+          return { canReply: false, reason: 'restricted' };
+        }
+        return { canReply: true, reason: null };
+      }, SELECTORS.reply)
+      .catch(() => ({ canReply: true, reason: null }));
+  }
+
+  async logReplyFailed(ctx, meta, errorMessage) {
+    await this.db.logActivity({
+      accountName: ctx.accountName,
+      action: 'reply_failed',
+      target: meta.tweetUrl || meta.tweetId,
+      success: false,
+      errorMessage: errorMessage?.slice(0, 500) || 'unknown',
+      details: { tweetId: meta.tweetId, author: meta.author },
+    });
   }
 
   decideActionCombo(comboRatios) {
@@ -297,7 +401,8 @@ class EngagementBot {
   }
 
   async fillReplyText(page, replyText, ctx) {
-    await page.waitForSelector(SELECTORS.replyBox, { visible: true, timeout: 12000 });
+    const { composer } = this.getReplyTimeouts(ctx);
+    await page.waitForSelector(SELECTORS.replyBox, { visible: true, timeout: composer });
     await page.click(SELECTORS.replyBox);
     await sleep(300);
 
@@ -329,53 +434,175 @@ class EngagementBot {
     }
   }
 
+  async verifyReplyTextInBox(page, minLen) {
+    try {
+      await page.waitForFunction(
+        (sel, min) => {
+          const el = document.querySelector(sel);
+          if (!el) return false;
+          const editable =
+            el.closest('[contenteditable="true"]') ||
+            el.querySelector('[contenteditable="true"]') ||
+            el;
+          return (editable.textContent || '').trim().length >= min;
+        },
+        { timeout: 8000 },
+        SELECTORS.replyBox,
+        minLen
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async nudgeComposerReact(page) {
+    await page.click(SELECTORS.replyBox).catch(() => null);
+    await page.keyboard.press('End');
+    await page.keyboard.type(' ', { delay: 20 });
+    await page.keyboard.press('Backspace');
+    await sleep(200);
+  }
+
+  async waitForEnabledPostButton(page, timeoutMs) {
+    try {
+      await page.waitForFunction(
+        () => {
+          const btn =
+            document.querySelector('button[data-testid="tweetButton"]') ||
+            document.querySelector('button[data-testid="tweetButtonInline"]');
+          return btn && btn.getAttribute('aria-disabled') !== 'true' && !btn.disabled;
+        },
+        { timeout: timeoutMs }
+      );
+      return (
+        (await page.$('button[data-testid="tweetButton"]')) ||
+        (await page.$('button[data-testid="tweetButtonInline"]'))
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  async postReply(page, ctx) {
+    const { post } = this.getReplyTimeouts(ctx);
+
+    let btn = await this.waitForEnabledPostButton(page, post);
+    if (btn) {
+      await btn.click();
+      return true;
+    }
+
+    await this.nudgeComposerReact(page);
+    btn = await this.waitForEnabledPostButton(page, 3000);
+    if (btn) {
+      await btn.click();
+      return true;
+    }
+
+    logger.info(`[${ctx.accountName}] Post fallback: Ctrl+Enter`);
+    await page.keyboard.down('Control');
+    await page.keyboard.press('Enter');
+    await page.keyboard.up('Control');
+    await sleep(1500);
+
+    const stillOpen = await page.$(SELECTORS.replyBox);
+    return !stillOpen;
+  }
+
+  async openReplyComposer(page, ctx) {
+    const replyButton = await page.$(SELECTORS.reply);
+    if (!replyButton) return false;
+    await replyButton.click();
+    await this.randomDelay(800, 1200);
+    return true;
+  }
+
+  async submitReplyOnce(page, text, ctx) {
+    await this.fillReplyText(page, text, ctx);
+
+    const minLen = Math.min(10, (text || '').trim().length);
+    let verified = await this.verifyReplyTextInBox(page, minLen);
+    if (!verified) {
+      await this.nudgeComposerReact(page);
+      const fastCtx = {
+        ...ctx,
+        delays: { ...ctx.delays, typing: { min: 15, max: 35 } },
+      };
+      await this.humanType(page, SELECTORS.replyBox, text, fastCtx);
+      verified = await this.verifyReplyTextInBox(page, minLen);
+    }
+
+    if (!verified) {
+      logger.warn(`[${ctx.accountName}] Reply text not verified in composer`);
+    }
+
+    await this.randomDelay(500, 900);
+    return this.postReply(page, ctx);
+  }
+
   async replyOnPage(page, replyText, meta, ctx, preloadedText = null) {
     const text = preloadedText || replyText;
+    let lastError = null;
+
     try {
-      logger.info(`[${ctx.accountName}] AI reply: "${text.substring(0, 80)}..."`);
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          if (attempt > 1) {
+            logger.info(`[${ctx.accountName}] Reply retry ${attempt}/2`);
+            await this.ensureComposerClosed(page, ctx);
+            await sleep(2000);
+          }
 
-      const replyButton = await page.$(SELECTORS.reply);
-      if (!replyButton) return false;
+          logger.info(`[${ctx.accountName}] AI reply: "${text.substring(0, 80)}..."`);
 
-      await replyButton.click();
-      await this.randomDelay(800, 1200);
+          if (!(await this.openReplyComposer(page, ctx))) {
+            lastError = new Error('Reply button not found');
+            continue;
+          }
 
-      await this.fillReplyText(page, text, ctx);
-      await this.randomDelay(500, 900);
+          const posted = await this.submitReplyOnce(page, text, ctx);
+          if (!posted) {
+            lastError = new Error('Post button timeout or not enabled');
+            await this.diagnoseReplyFailure(page, ctx, meta, lastError.message);
+            await this.ensureComposerClosed(page, ctx);
+            continue;
+          }
 
-      const postButton = await page.waitForSelector(SELECTORS.tweetButton, {
-        visible: true,
-        timeout: 10000,
-      });
-      if (!postButton) return false;
+          await page
+            .waitForFunction(
+              (sel) => !document.querySelector(sel),
+              { timeout: 15000 },
+              SELECTORS.replyBox
+            )
+            .catch(() => null);
 
-      await postButton.click();
+          await this.randomDelay(1500, 2500);
+          await this.ensureComposerClosed(page, ctx);
 
-      await page
-        .waitForFunction(
-          (sel) => !document.querySelector(sel),
-          { timeout: 15000 },
-          SELECTORS.replyBox
-        )
-        .catch(() => null);
+          logger.info(`[${ctx.accountName}] Replied: ${meta.tweetUrl.substring(0, 60)}...`);
 
-      await this.randomDelay(1500, 2500);
-      await this.ensureComposerClosed(page, ctx);
+          return await this.recordInteraction({
+            tweetId: meta.tweetId,
+            tweetUrl: meta.tweetUrl,
+            authorUsername: meta.author,
+            content: meta.content,
+            interactionType: 'reply',
+            accountName: ctx.accountName,
+            keywordUsed: meta.keyword,
+            aiGeneratedReply: text,
+          });
+        } catch (error) {
+          lastError = error;
+          logger.error(
+            `[${ctx.accountName}] Reply error (attempt ${attempt}): ${error.message}`
+          );
+          await this.diagnoseReplyFailure(page, ctx, meta, error.message);
+          await this.ensureComposerClosed(page, ctx);
+        }
+      }
 
-      logger.info(`[${ctx.accountName}] Replied: ${meta.tweetUrl.substring(0, 60)}...`);
-
-      return await this.recordInteraction({
-        tweetId: meta.tweetId,
-        tweetUrl: meta.tweetUrl,
-        authorUsername: meta.author,
-        content: meta.content,
-        interactionType: 'reply',
-        accountName: ctx.accountName,
-        keywordUsed: meta.keyword,
-        aiGeneratedReply: text,
-      });
-    } catch (error) {
-      logger.error(`[${ctx.accountName}] Reply error: ${error.message}`);
+      await this.logReplyFailed(ctx, meta, lastError?.message || 'reply failed');
       return false;
     } finally {
       await this.ensureComposerClosed(page, ctx);
@@ -535,20 +762,27 @@ class EngagementBot {
   async executeCombo(page, actions, meta, tweetContent, ctx) {
     let successCount = 0;
     let preparedReply = null;
+    let actionsToRun = [...actions];
 
     if (actions.includes('reply')) {
-      preparedReply = await this.ai.generateReply(
-        tweetContent.text,
-        tweetContent.author,
-        '',
-        this.getReplyOptions(ctx)
-      );
+      const { canReply, reason } = await this.canReplyOnPage(page);
+      if (!canReply) {
+        logger.info(`[${ctx.accountName}] Reply skipped: ${reason}`);
+        actionsToRun = actions.filter((a) => a !== 'reply');
+      } else {
+        preparedReply = await this.ai.generateReply(
+          tweetContent.text,
+          tweetContent.author,
+          '',
+          this.getReplyOptions(ctx)
+        );
+      }
     }
 
-    for (let i = 0; i < actions.length; i++) {
+    for (let i = 0; i < actionsToRun.length; i++) {
       if (!this.isActive()) break;
 
-      const action = actions[i];
+      const action = actionsToRun[i];
       let ok = false;
 
       switch (action) {
@@ -570,7 +804,7 @@ class EngagementBot {
 
       if (ok) successCount++;
 
-      if (i < actions.length - 1) {
+      if (i < actionsToRun.length - 1) {
         await this.randomDelay(COMBO_DELAY.min, COMBO_DELAY.max);
       }
     }

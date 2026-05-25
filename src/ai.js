@@ -134,6 +134,7 @@ Return ONLY the reply text.
   async generateGemini(prompt) {
     if (!this.genAI) throw new Error('Gemini API key not configured');
 
+    const failures = [];
     for (const modelName of this.geminiModels) {
       try {
         const model = this.genAI.getGenerativeModel({
@@ -146,14 +147,23 @@ Return ONLY the reply text.
         const text = result.response.text().trim();
         if (text) {
           logger.info(`AI reply via Gemini (${modelName})`);
+          // #region agent log
+          fetch('http://127.0.0.1:7338/ingest/9511d480-bf20-4dae-8e27-edbadaf3f9e4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6e2746'},body:JSON.stringify({sessionId:'6e2746',location:'ai.js:generateGemini',message:'gemini ok',data:{modelName},timestamp:Date.now(),hypothesisId:'B',runId:'post-fix'})}).catch(()=>{});
+          // #endregion
           return text;
         }
       } catch (error) {
-        if (!this.isRetryableError(error)) throw error;
-        logger.warn(`Gemini ${modelName}: ${error.message?.slice(0, 100)}`);
+        const short = error.message?.slice(0, 120) || String(error);
+        failures.push({ modelName, short });
+        logger.warn(`Gemini ${modelName}: ${short.slice(0, 100)}`);
+        // #region agent log
+        fetch('http://127.0.0.1:7338/ingest/9511d480-bf20-4dae-8e27-edbadaf3f9e4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6e2746'},body:JSON.stringify({sessionId:'6e2746',location:'ai.js:generateGemini',message:'gemini model fail',data:{modelName,error:short},timestamp:Date.now(),hypothesisId:'B',runId:'post-fix'})}).catch(()=>{});
+        // #endregion
       }
     }
-    throw new Error('All Gemini models failed');
+    throw new Error(
+      `All Gemini models failed (${failures.map((f) => f.modelName).join(', ')})`
+    );
   }
 
   async generateDeepSeek(prompt) {
@@ -189,7 +199,7 @@ Return ONLY the reply text.
   }
 
   isRetryableError(error) {
-    const msg = error.message || '';
+    const msg = (error.message || '').toLowerCase();
     return (
       msg.includes('404') ||
       msg.includes('not found') ||
@@ -197,7 +207,13 @@ Return ONLY the reply text.
       msg.includes('429') ||
       msg.includes('quota') ||
       msg.includes('500') ||
-      msg.includes('503')
+      msg.includes('503') ||
+      msg.includes('error fetching') ||
+      msg.includes('fetch failed') ||
+      msg.includes('network') ||
+      msg.includes('econnreset') ||
+      msg.includes('etimedout') ||
+      msg.includes('enotfound')
     );
   }
 

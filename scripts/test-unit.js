@@ -94,6 +94,22 @@ test('decideActionCombo returns valid action arrays', () => {
     }
   }
 });
+test('getReplyTimeouts uses config defaults', () => {
+  const ctx = {
+    interactions: {},
+  };
+  const t = mockBot.getReplyTimeouts(ctx);
+  assert.strictEqual(t.composer, config.interactions.replyComposerTimeoutMs);
+  assert.strictEqual(t.post, config.interactions.replyPostTimeoutMs);
+});
+test('getReplyTimeouts merges per-account overrides', () => {
+  const ctx = {
+    interactions: { replyPostTimeoutMs: 25000, replyComposerTimeoutMs: 12000 },
+  };
+  const t = mockBot.getReplyTimeouts(ctx);
+  assert.strictEqual(t.post, 25000);
+  assert.strictEqual(t.composer, 12000);
+});
 
 console.log('\n=== Account config ===');
 const { loadAccountConfig, resolveAccountProfile } = require('../src/accountConfig');
