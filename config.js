@@ -22,7 +22,7 @@ module.exports = {
     followMaxFollowers: parseInt(process.env.FOLLOW_MAX_FOLLOWERS || '0', 10) || null,
     // true = vẫn follow nếu không đọc được số follower trên profile
     followAllowIfUnreadable: process.env.FOLLOW_ALLOW_IF_UNREADABLE === 'true',
-    replyMaxLength: 275,
+    replyMaxLength: parseInt(process.env.REPLY_MAX_LENGTH || '240', 10),
     replyComposerTimeoutMs: parseInt(process.env.REPLY_COMPOSER_TIMEOUT_MS || '15000', 10),
     replyPostTimeoutMs: parseInt(process.env.REPLY_POST_TIMEOUT_MS || '20000', 10),
     // Mỗi comment AI phải chứa đủ các chuỗi sau (link, từ khóa…)

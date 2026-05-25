@@ -33,8 +33,8 @@ const COMBO_MAP = {
   reply: ['reply'],
   follow: ['follow'],
   like_retweet: ['like', 'retweet'],
-  like_reply: ['like', 'reply'],
-  like_retweet_reply: ['like', 'retweet', 'reply'],
+  like_reply: ['reply', 'like'],
+  like_retweet_reply: ['reply', 'retweet', 'like'],
   like_follow: ['like', 'follow'],
   like_retweet_follow: ['like', 'retweet', 'follow'],
 };
@@ -155,15 +155,24 @@ class EngagementBot {
   }
 
   async diagnoseReplyFailure(page, ctx, meta, errorMessage) {
+    const errMsg = errorMessage?.slice(0, 120) || null;
     const diagnosis = await page
-      .evaluate((postSel, replyBoxSel) => {
+      .evaluate((postSel, replyBoxSel, err) => {
+        const findPostBtn = (root) => {
+          if (!root) return null;
+          return (
+            root.querySelector('button[data-testid="tweetButton"]') ||
+            root.querySelector('button[data-testid="tweetButtonInline"]')
+          );
+        };
         const box = document.querySelector(replyBoxSel);
         const editable =
           box?.closest('[contenteditable="true"]') ||
           box?.querySelector('[contenteditable="true"]') ||
           box;
         const textLen = (editable?.textContent || '').trim().length;
-        const btn = document.querySelector(postSel);
+        const dialog = document.querySelector('[role="dialog"]');
+        const btn = findPostBtn(dialog) || findPostBtn(document.body);
         let postBtnState = 'missing';
         if (btn) {
           const disabled = btn.disabled || btn.getAttribute('aria-disabled') === 'true';
@@ -183,12 +192,13 @@ class EngagementBot {
           hasBox: !!box,
           textLen,
           postBtnState,
+          hasDialog: !!dialog,
           alertText: alerts.slice(0, 3).join(' | ') || null,
           restrictedHint,
-          errorMessage: errorMessage?.slice(0, 120) || null,
+          errorMessage: err,
         };
-      }, POST_BUTTON_IN_PAGE, SELECTORS.replyBox)
-      .catch(() => ({ evaluateFailed: true, errorMessage }));
+      }, POST_BUTTON_IN_PAGE, SELECTORS.replyBox, errMsg)
+      .catch((e) => ({ evaluateFailed: true, errorMessage: errMsg, evaluateError: e.message?.slice(0, 80) }));
 
     logger.warn(`[${ctx.accountName}] replyDiagnosis: ${JSON.stringify(diagnosis)}`);
 
@@ -400,37 +410,61 @@ class EngagementBot {
     }
   }
 
-  async fillReplyText(page, replyText, ctx) {
-    const { composer } = this.getReplyTimeouts(ctx);
-    await page.waitForSelector(SELECTORS.replyBox, { visible: true, timeout: composer });
-    await page.click(SELECTORS.replyBox);
-    await sleep(300);
+  async clearReplyComposer(page) {
+    await page.keyboard.down('Control');
+    await page.keyboard.press('KeyA');
+    await page.keyboard.up('Control');
+    await page.keyboard.press('Backspace');
+    await sleep(200);
+  }
 
-    const filled = await page.evaluate(
-      (selector, content) => {
+  async getComposerTextLength(page) {
+    return page
+      .evaluate((selector) => {
         const el = document.querySelector(selector);
-        if (!el) return false;
+        if (!el) return 0;
         const editable =
           el.closest('[contenteditable="true"]') ||
           el.querySelector('[contenteditable="true"]') ||
           el;
-        editable.focus();
-        editable.textContent = content;
-        editable.dispatchEvent(
-          new InputEvent('input', { bubbles: true, cancelable: true, data: content })
-        );
-        return (editable.textContent || '').length > 0;
-      },
-      SELECTORS.replyBox,
-      replyText
-    );
+        return (editable.textContent || '').trim().length;
+      }, SELECTORS.replyBox)
+      .catch(() => 0);
+  }
 
-    if (!filled) {
-      const fastCtx = {
-        ...ctx,
-        delays: { ...ctx.delays, typing: { min: 15, max: 35 } },
-      };
-      await this.humanType(page, SELECTORS.replyBox, replyText, fastCtx);
+  async fillReplyText(page, replyText, ctx) {
+    const { composer } = this.getReplyTimeouts(ctx);
+    const text = (replyText || '').trim();
+    const maxLen =
+      ctx.interactions.replyMaxLength ?? this.config.interactions.replyMaxLength ?? 275;
+
+    await page.waitForSelector(SELECTORS.replyBox, { visible: true, timeout: composer });
+    await page.click(SELECTORS.replyBox);
+    await sleep(300);
+    await this.clearReplyComposer(page);
+
+    const fastCtx = {
+      ...ctx,
+      delays: { ...ctx.delays, typing: { min: 15, max: 35 } },
+    };
+    await this.humanType(page, SELECTORS.replyBox, text, fastCtx);
+
+    let len = await this.getComposerTextLength(page);
+    const expectedLen = text.length;
+
+    if (len > maxLen * 1.2 || len > expectedLen * 1.35) {
+      logger.warn(
+        `[${ctx.accountName}] Composer text too long (${len} chars, expected ~${expectedLen}) — clear and retype once`
+      );
+      await this.clearReplyComposer(page);
+      await this.humanType(page, SELECTORS.replyBox, text, fastCtx);
+      len = await this.getComposerTextLength(page);
+    }
+
+    if (len === 0) {
+      logger.warn(`[${ctx.accountName}] fillReplyText: composer empty after type`);
+    } else if (len > maxLen) {
+      logger.warn(`[${ctx.accountName}] Composer ${len} chars > max ${maxLen} (X free tier may block post)`);
     }
   }
 
@@ -468,13 +502,30 @@ class EngagementBot {
     try {
       await page.waitForFunction(
         () => {
-          const btn =
-            document.querySelector('button[data-testid="tweetButton"]') ||
-            document.querySelector('button[data-testid="tweetButtonInline"]');
-          return btn && btn.getAttribute('aria-disabled') !== 'true' && !btn.disabled;
+          const isEnabled = (btn) =>
+            btn && btn.getAttribute('aria-disabled') !== 'true' && !btn.disabled;
+          const roots = [
+            document.querySelector('[role="dialog"]'),
+            document.querySelector('[data-testid="mask"]')?.parentElement,
+            document.body,
+          ].filter(Boolean);
+          for (const root of roots) {
+            const btn =
+              root.querySelector('button[data-testid="tweetButton"]') ||
+              root.querySelector('button[data-testid="tweetButtonInline"]');
+            if (isEnabled(btn)) return true;
+          }
+          return false;
         },
         { timeout: timeoutMs }
       );
+      const dialog = await page.$('[role="dialog"]');
+      if (dialog) {
+        const inDialog =
+          (await dialog.$('button[data-testid="tweetButton"]')) ||
+          (await dialog.$('button[data-testid="tweetButtonInline"]'));
+        if (inDialog) return inDialog;
+      }
       return (
         (await page.$('button[data-testid="tweetButton"]')) ||
         (await page.$('button[data-testid="tweetButtonInline"]'))
@@ -484,30 +535,61 @@ class EngagementBot {
     }
   }
 
+  async confirmReplyPosted(page, timeoutMs = 12000) {
+    try {
+      await page.waitForFunction(
+        (replyBoxSel) => {
+          for (const el of document.querySelectorAll('[data-testid="toast"], [role="alert"]')) {
+            const t = (el.textContent || '').toLowerCase();
+            if (
+              t.includes('sent') ||
+              t.includes('replied') ||
+              t.includes('posted') ||
+              t.includes('your reply')
+            ) {
+              return true;
+            }
+          }
+          const box = document.querySelector(replyBoxSel);
+          const dialog = document.querySelector('[role="dialog"]');
+          if (!box && !dialog) return true;
+          if (!box) return true;
+          return false;
+        },
+        { timeout: timeoutMs },
+        SELECTORS.replyBox
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async postReply(page, ctx) {
     const { post } = this.getReplyTimeouts(ctx);
 
     let btn = await this.waitForEnabledPostButton(page, post);
     if (btn) {
       await btn.click();
-      return true;
+      await sleep(800);
+      if (await this.confirmReplyPosted(page, 10000)) return true;
     }
 
     await this.nudgeComposerReact(page);
-    btn = await this.waitForEnabledPostButton(page, 3000);
+    btn = await this.waitForEnabledPostButton(page, 5000);
     if (btn) {
       await btn.click();
-      return true;
+      await sleep(800);
+      if (await this.confirmReplyPosted(page, 10000)) return true;
     }
 
     logger.info(`[${ctx.accountName}] Post fallback: Ctrl+Enter`);
     await page.keyboard.down('Control');
     await page.keyboard.press('Enter');
     await page.keyboard.up('Control');
-    await sleep(1500);
+    await sleep(2000);
 
-    const stillOpen = await page.$(SELECTORS.replyBox);
-    return !stillOpen;
+    return this.confirmReplyPosted(page, 8000);
   }
 
   async openReplyComposer(page, ctx) {
@@ -520,23 +602,6 @@ class EngagementBot {
 
   async submitReplyOnce(page, text, ctx) {
     await this.fillReplyText(page, text, ctx);
-
-    const minLen = Math.min(10, (text || '').trim().length);
-    let verified = await this.verifyReplyTextInBox(page, minLen);
-    if (!verified) {
-      await this.nudgeComposerReact(page);
-      const fastCtx = {
-        ...ctx,
-        delays: { ...ctx.delays, typing: { min: 15, max: 35 } },
-      };
-      await this.humanType(page, SELECTORS.replyBox, text, fastCtx);
-      verified = await this.verifyReplyTextInBox(page, minLen);
-    }
-
-    if (!verified) {
-      logger.warn(`[${ctx.accountName}] Reply text not verified in composer`);
-    }
-
     await this.randomDelay(500, 900);
     return this.postReply(page, ctx);
   }
@@ -563,19 +628,11 @@ class EngagementBot {
 
           const posted = await this.submitReplyOnce(page, text, ctx);
           if (!posted) {
-            lastError = new Error('Post button timeout or not enabled');
+            lastError = new Error('Post failed or not confirmed');
             await this.diagnoseReplyFailure(page, ctx, meta, lastError.message);
             await this.ensureComposerClosed(page, ctx);
             continue;
           }
-
-          await page
-            .waitForFunction(
-              (sel) => !document.querySelector(sel),
-              { timeout: 15000 },
-              SELECTORS.replyBox
-            )
-            .catch(() => null);
 
           await this.randomDelay(1500, 2500);
           await this.ensureComposerClosed(page, ctx);

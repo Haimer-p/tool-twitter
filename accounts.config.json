@@ -31,12 +31,12 @@
       "tweetsPerKeyword": 8,
       "followMinFollowers": 1000,
       "followMaxFollowers": 10000000,
-      "replyMaxLength": 275,
+      "replyMaxLength": 240,
       "replyComposerTimeoutMs": 15000,
       "replyPostTimeoutMs": 20000,
       "replyRequiredIncludes": [
-        "https://dexscreener.com/solana/9gs19u3zuy8m4ujqoztv1xa6fnu6j9zguze8jypey9dp",
-        "Boomerang"
+        "https://dexscreener.com/solana/b5ihvh6qrkgtxhp61mzg5rramacwtva3p2grbzzrfu65",
+        "CIG"
       ],
       "comboRatios": {
         "like": 0.03,
@@ -56,18 +56,18 @@
       "name": "accquangkhai",
       "enabled": true,
       "keywords": [
-        "Boomerang",
-        "$Boomerang",
-        "Boomerang solana",
-        "Boomerang pump",
-        "Boomerang memecoin",
-        "Boomerang_tek",
-        "boomerang.tips",
-        "BwEyBmL9drBdo4XJno8iGRvjiZcGL9FvUnq6xVNhpump",
-        "Boomerang chart",
-        "solana Boomerang",
-        "pumpswap Boomerang",
-        "Boomerang token"
+        "CIG",
+        "$CIG",
+        "cig solana",
+        "cig9AXeEzQMUts9WXzmb8S5DapSVJ2b8JnrRmnWRdYz",
+        "puffcigwtf",
+        "cig memecoin",
+        "cig pump",
+        "pumpswap cig",
+        "cig chart",
+        "solana cig",
+        "cig token",
+        "puffacig"
       ],
       "delays": {
         "betweenActions": { "min": 30000, "max": 60000 },
@@ -78,8 +78,8 @@
         "maxPerAccountPerRun": 500,
         "keywordsPerRun": 10,
         "replyRequiredIncludes": [
-          "https://dexscreener.com/solana/9gs19u3zuy8m4ujqoztv1xa6fnu6j9zguze8jypey9dp",
-          "Boomerang"
+          "https://dexscreener.com/solana/b5ihvh6qrkgtxhp61mzg5rramacwtva3p2grbzzrfu65",
+          "CIG"
         ],
         "comboRatios": {
           "like": 0.03,
@@ -98,18 +98,18 @@
       "name": "accnhattan",
       "enabled": true,
       "keywords": [
-        "Boomerang",
-        "$Boomerang",
-        "Boomerang solana",
-        "Boomerang pump",
-        "Boomerang memecoin",
-        "Boomerang_tek",
-        "boomerang.tips",
-        "BwEyBmL9drBdo4XJno8iGRvjiZcGL9FvUnq6xVNhpump",
-        "Boomerang chart",
-        "solana Boomerang",
-        "pumpswap Boomerang",
-        "Boomerang token"
+        "CIG",
+        "$CIG",
+        "cig solana",
+        "cig9AXeEzQMUts9WXzmb8S5DapSVJ2b8JnrRmnWRdYz",
+        "puffcigwtf",
+        "cig memecoin",
+        "cig sol",
+        "cig dex",
+        "cig airdrop",
+        "$cig solana",
+        "puffacig.wtf",
+        "cig pumpswap"
       ],
       "delays": {
         "betweenActions": { "min": 30000, "max": 60000 },
@@ -120,8 +120,8 @@
         "maxPerAccountPerRun": 500,
         "keywordsPerRun": 10,
         "replyRequiredIncludes": [
-          "https://dexscreener.com/solana/9gs19u3zuy8m4ujqoztv1xa6fnu6j9zguze8jypey9dp",
-          "Boomerang"
+          "https://dexscreener.com/solana/b5ihvh6qrkgtxhp61mzg5rramacwtva3p2grbzzrfu65",
+          "CIG"
         ],
         "comboRatios": {
           "like": 0.03,
@@ -140,18 +140,18 @@
       "name": "acckingchiton",
       "enabled": true,
       "keywords": [
-        "Boomerang",
-        "$Boomerang",
-        "Boomerang solana",
-        "Boomerang pump",
-        "Boomerang memecoin",
-        "Boomerang_tek",
-        "boomerang.tips",
-        "BwEyBmL9drBdo4XJno8iGRvjiZcGL9FvUnq6xVNhpump",
-        "Boomerang chart",
-        "solana Boomerang",
-        "pumpswap Boomerang",
-        "Boomerang token"
+        "CIG",
+        "$CIG",
+        "cig solana",
+        "cig9AXeEzQMUts9WXzmb8S5DapSVJ2b8JnrRmnWRdYz",
+        "puffcigwtf",
+        "cig memecoin",
+        "cig solana pump",
+        "cig moon",
+        "buy cig",
+        "cig crypto",
+        "puff cig",
+        "cig dexscreener"
       ],
       "delays": {
         "betweenActions": { "min": 30000, "max": 60000 },
@@ -162,8 +162,8 @@
         "maxPerAccountPerRun": 500,
         "keywordsPerRun": 10,
         "replyRequiredIncludes": [
-          "https://dexscreener.com/solana/9gs19u3zuy8m4ujqoztv1xa6fnu6j9zguze8jypey9dp",
-          "Boomerang"
+          "https://dexscreener.com/solana/b5ihvh6qrkgtxhp61mzg5rramacwtva3p2grbzzrfu65",
+          "CIG"
         ],
         "comboRatios": {
           "like": 0.03,

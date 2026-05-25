@@ -38,14 +38,14 @@ class AIService {
 
     const requiredBlock = hasRequired
       ? `
-MANDATORY — reply MUST include ALL of these strings exactly (copy-paste as given):
+MANDATORY — include each item below exactly ONCE (never repeat the URL):
 ${requiredIncludes.map((s) => `- ${s}`).join('\n')}
-Weave them in naturally (e.g. "chart looking good" + link on new line). Do NOT omit any.
+Put the dex link on its own line at the end. Short comment (1-2 sentences) only.
 `
       : '';
 
     const linkRule = hasRequired
-      ? '- Links are allowed when listed in MANDATORY above'
+      ? '- Include the dex link exactly once; never paste the same URL twice'
       : '- No links unless part of mandatory includes';
 
     return `
@@ -67,30 +67,66 @@ Return ONLY the reply text.
 `.trim();
   }
 
+  dedupeUrlsInText(text) {
+    const seen = new Set();
+    return (text || '')
+      .replace(/https?:\/\/[^\s\n]+/gi, (url) => {
+        const key = url.toLowerCase().replace(/\/$/, '');
+        if (seen.has(key)) return '';
+        seen.add(key);
+        return url;
+      })
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  includesRequired(result, req) {
+    const hay = (result || '').toLowerCase();
+    const needle = String(req).toLowerCase().trim();
+    if (!needle) return true;
+    if (hay.includes(needle)) return true;
+    if (needle.startsWith('http')) {
+      try {
+        const path = new URL(needle).pathname.toLowerCase();
+        const slug = path.split('/').filter(Boolean).pop();
+        if (slug && hay.includes(slug)) return true;
+      } catch {
+        /* ignore */
+      }
+    }
+    return false;
+  }
+
   finalizeReply(text, replyOptions = {}) {
     const { requiredIncludes, maxLength } = this.normalizeReplyOptions(replyOptions);
-    let result = (text || '').trim().replace(/^["']|["']$/g, '');
-
-    const missing = requiredIncludes.filter(
-      (req) => !result.toLowerCase().includes(String(req).toLowerCase())
+    let result = this.dedupeUrlsInText(
+      (text || '').trim().replace(/^["']|["']$/g, '')
     );
 
+    const missing = requiredIncludes.filter((req) => !this.includesRequired(result, req));
+
     if (missing.length > 0) {
-      const suffix = missing.join(' ');
-      const sep = result.length > 0 && !result.endsWith('\n') ? '\n' : '';
+      const lines = missing.map((m) => String(m).trim()).filter(Boolean);
+      const suffix = lines.join('\n');
+      const sep = result.length > 0 ? '\n' : '';
       result = `${result}${sep}${suffix}`.trim();
+      result = this.dedupeUrlsInText(result);
       logger.info(`Reply appended required: ${missing.length} item(s)`);
     }
 
     if (result.length > maxLength) {
-      const requiredText = requiredIncludes.join(' ');
-      const reserved = requiredText.length + 4;
-      if (requiredIncludes.length > 0 && reserved < maxLength) {
+      const linkReq = requiredIncludes.find((r) => String(r).startsWith('http'));
+      const tickerReq = requiredIncludes.find((r) => !String(r).startsWith('http'));
+      const footer = [linkReq, tickerReq].filter(Boolean).join('\n');
+      const reserved = footer.length + (footer ? 2 : 0);
+      if (footer && reserved < maxLength) {
         const mainMax = maxLength - reserved;
-        result = `${result.slice(0, mainMax).trim()}… ${requiredText}`;
+        result = `${result.slice(0, mainMax).trim()}\n${footer}`;
       } else {
         result = result.slice(0, maxLength);
       }
+      result = this.dedupeUrlsInText(result);
     }
 
     return result.trim();
@@ -147,18 +183,12 @@ Return ONLY the reply text.
         const text = result.response.text().trim();
         if (text) {
           logger.info(`AI reply via Gemini (${modelName})`);
-          // #region agent log
-          fetch('http://127.0.0.1:7338/ingest/9511d480-bf20-4dae-8e27-edbadaf3f9e4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6e2746'},body:JSON.stringify({sessionId:'6e2746',location:'ai.js:generateGemini',message:'gemini ok',data:{modelName},timestamp:Date.now(),hypothesisId:'B',runId:'post-fix'})}).catch(()=>{});
-          // #endregion
           return text;
         }
       } catch (error) {
         const short = error.message?.slice(0, 120) || String(error);
         failures.push({ modelName, short });
         logger.warn(`Gemini ${modelName}: ${short.slice(0, 100)}`);
-        // #region agent log
-        fetch('http://127.0.0.1:7338/ingest/9511d480-bf20-4dae-8e27-edbadaf3f9e4',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6e2746'},body:JSON.stringify({sessionId:'6e2746',location:'ai.js:generateGemini',message:'gemini model fail',data:{modelName,error:short},timestamp:Date.now(),hypothesisId:'B',runId:'post-fix'})}).catch(()=>{});
-        // #endregion
       }
     }
     throw new Error(

@@ -79,6 +79,25 @@ test('finalizeReply appends missing link', () => {
   assert.ok(out.includes('dexscreener.com'));
   assert.ok(out.includes('Nice chart'));
 });
+test('finalizeReply dedupes duplicate dex URLs', () => {
+  const link = 'https://dexscreener.com/solana/9gs19u3zuy8m4ujqoztv1xa6fnu6j9zguze8jypey9dp';
+  const dup = `Chart looks good ${link} ${link} Boomerang`;
+  const out = aiTest.finalizeReply(dup, {
+    requiredIncludes: [link, 'Boomerang'],
+    maxLength: 275,
+  });
+  const count = (out.match(/dexscreener\.com/gi) || []).length;
+  assert.strictEqual(count, 1, `expected 1 dex link, got ${count}`);
+});
+test('finalizeReply does not re-append link when slug already present', () => {
+  const link = 'https://dexscreener.com/solana/9gs19u3zuy8m4ujqoztv1xa6fnu6j9zguze8jypey9dp';
+  const out = aiTest.finalizeReply(`solid pump ${link}`, {
+    requiredIncludes: [link, 'Boomerang'],
+    maxLength: 275,
+  });
+  const count = (out.match(/9gs19u3zuy8m4ujqoztv1xa6fnu6j9zguze8jypey9dp/gi) || []).length;
+  assert.ok(count <= 1);
+});
 
 console.log('\n=== EngagementBot.decideActionCombo ===');
 const EngagementBot = require('../src/engage');
@@ -93,6 +112,12 @@ test('decideActionCombo returns valid action arrays', () => {
       assert.ok(VALID_ACTIONS.has(action), `invalid action: ${action}`);
     }
   }
+});
+test('like_reply runs reply before like', () => {
+  const combo = mockBot.decideActionCombo({ like_reply: 1 });
+  assert.deepStrictEqual(combo, ['reply', 'like']);
+  const combo3 = mockBot.decideActionCombo({ like_retweet_reply: 1 });
+  assert.deepStrictEqual(combo3, ['reply', 'retweet', 'like']);
 });
 test('getReplyTimeouts uses config defaults', () => {
   const ctx = {
