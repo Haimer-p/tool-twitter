@@ -177,15 +177,15 @@ async function main() {
 
   const { accounts, parallel } = await resolveAccountProfiles();
 
+  runtimeState = { accounts, parallel };
+  if (dashboard) dashboard.botState = runtimeState;
+
   console.log('\nSchedule:');
   console.log('1. Run now');
   console.log('2. Cron schedule');
   console.log('3. Run once and exit');
 
   const scheduleChoice = await askQuestion('Choice (1-3): ');
-
-  runtimeState = { accounts, parallel };
-  if (dashboard) dashboard.botState = runtimeState;
 
   const run = () => runBot(accounts, parallel.maxConcurrent);
 
