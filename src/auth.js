@@ -49,7 +49,32 @@ class AuthManager {
     });
   }
 
-  async login(page, accountName) {
+  async isLoggedInOnPage(page) {
+    return page
+      .evaluate(() => {
+        const url = window.location.href;
+        if (url.includes('/login') || url.includes('/i/flow/login')) return false;
+        return !!(
+          document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]') ||
+          document.querySelector('[data-testid="AppTabBar_Home_Link"]') ||
+          document.querySelector('a[aria-label="Home"]')
+        );
+      })
+      .catch(() => false);
+  }
+
+  async waitForManualLogin(page, timeoutMs = 300000, checkEveryMs = 2500) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      if (await this.isLoggedInOnPage(page)) return true;
+      await sleep(checkEveryMs);
+    }
+    return false;
+  }
+
+  async login(page, accountName, options = {}) {
+    const mode = options.mode || 'terminal'; // terminal | dashboard
+    const manualTimeoutMs = options.manualTimeoutMs || 300000;
     const cookies = await this.loadCookies(accountName);
 
     if (cookies && cookies.length > 0) {
@@ -57,17 +82,7 @@ class AuthManager {
       await page.goto(`${this.baseUrl}/home`, { waitUntil: 'domcontentloaded' });
       await sleep(3000);
 
-      const loggedIn = await page
-        .evaluate(() => {
-          const url = window.location.href;
-          if (url.includes('/login') || url.includes('/i/flow/login')) return false;
-          return !!(
-            document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]') ||
-            document.querySelector('[data-testid="AppTabBar_Home_Link"]') ||
-            document.querySelector('a[aria-label="Home"]')
-          );
-        })
-        .catch(() => false);
+      const loggedIn = await this.isLoggedInOnPage(page);
 
       if (loggedIn) {
         logger.info(`${accountName}: logged in via cookies`);
@@ -78,7 +93,16 @@ class AuthManager {
 
     logger.info(`${accountName}: please log in manually in the browser`);
     await page.goto(`${this.baseUrl}/login`, { waitUntil: 'domcontentloaded' });
-    await this.askEnter('Press Enter after login is complete: ');
+    if (mode === 'dashboard') {
+      logger.info(`${accountName}: waiting for dashboard login completion (${manualTimeoutMs}ms)`);
+      const done = await this.waitForManualLogin(page, manualTimeoutMs);
+      if (!done) {
+        logger.warn(`${accountName}: manual login timeout from dashboard`);
+        return false;
+      }
+    } else {
+      await this.askEnter('Press Enter after login is complete: ');
+    }
 
     const newCookies = await page.cookies();
     await this.saveCookies(accountName, newCookies);

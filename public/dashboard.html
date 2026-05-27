@@ -54,6 +54,14 @@
     .activity-target { color: #666; font-size: 12px; margin-top: 4px; word-break: break-all; }
     .activity-time { color: #999; font-size: 12px; }
     .control-panel { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+    .select {
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      min-width: 220px;
+      font-size: 14px;
+      background: white;
+    }
     .btn {
       padding: 12px 30px; border: none; border-radius: 8px;
       font-size: 16px; font-weight: 600; cursor: pointer;
@@ -75,6 +83,9 @@
         <input type="password" id="authPass" placeholder="Password" value="admin123">
         <button class="btn btn-start" onclick="saveAuth()">Lưu đăng nhập & tải dữ liệu</button>
         <button class="btn btn-stop" style="background:#3498db" onclick="initialFetch()">Làm mới</button>
+        <select class="select" id="loginAccountSelect" style="margin-left:8px;min-width:200px"></select>
+        <input type="text" id="loginAccountInput" placeholder="hoặc nhập user mới" style="padding:8px;border:1px solid #ddd;border-radius:6px;">
+        <button class="btn btn-start" style="background:#8e44ad" onclick="loginAccountFromDashboard()">Login account</button>
       </div>
       <p style="color:#888;font-size:13px;margin-top:8px">Bấm nút xanh. Port theo .env (vd: http://localhost:3001).</p>
     </div>
@@ -97,6 +108,12 @@
     </div>
 
     <div class="control-panel">
+      <select class="select" id="configFileSelect"></select>
+      <select class="select" id="runProfileSelect">
+        <option value="yeu">Chế độ: yếu</option>
+        <option value="vua" selected>Chế độ: vừa</option>
+        <option value="manh">Chế độ: mạnh</option>
+      </select>
       <button class="btn btn-start" onclick="controlBot('start')">Chạy bot</button>
       <button class="btn btn-stop" onclick="controlBot('stop')">Dừng bot</button>
     </div>
@@ -188,11 +205,67 @@
     }
 
     async function controlBot(action) {
+      const payload = action === 'start'
+        ? {
+            configFile: document.getElementById('configFileSelect').value || undefined,
+            runProfile: document.getElementById('runProfileSelect').value || 'vua',
+          }
+        : {};
       await fetch('/api/control/' + action, {
         method: 'POST',
         headers: { Authorization: getAuthHeader(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify(payload),
       });
+    }
+
+    async function loadAccountOptions() {
+      const select = document.getElementById('loginAccountSelect');
+      try {
+        const data = await apiFetch('/api/accounts');
+        const accounts = data.accounts || [];
+        if (!accounts.length) {
+          select.innerHTML = '<option value="">Chưa có cookie account</option>';
+          return;
+        }
+        select.innerHTML = accounts.map((a) => `<option value="${a}">${a}</option>`).join('');
+      } catch {
+        select.innerHTML = '<option value="">Không tải được accounts</option>';
+      }
+    }
+
+    async function loginAccountFromDashboard() {
+      const typed = document.getElementById('loginAccountInput').value.trim();
+      const selected = document.getElementById('loginAccountSelect').value;
+      const accountName = typed || selected;
+      if (!accountName) {
+        alert('Hãy chọn hoặc nhập account để login');
+        return;
+      }
+      await fetch('/api/control/login-account', {
+        method: 'POST',
+        headers: { Authorization: getAuthHeader(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountName }),
+      });
+    }
+
+    async function loadConfigSelectors() {
+      try {
+        const data = await apiFetch('/api/config-files');
+        const select = document.getElementById('configFileSelect');
+        const active = data.activeConfigFile || 'accounts.config.json';
+        const files = data.files || [];
+        if (!files.length) {
+          select.innerHTML = '<option value="accounts.config.json">accounts.config.json</option>';
+          return;
+        }
+        select.innerHTML = files
+          .map((f) => `<option value="${f}">${f}</option>`)
+          .join('');
+        select.value = files.includes(active) ? active : files[0];
+      } catch {
+        const select = document.getElementById('configFileSelect');
+        select.innerHTML = '<option value="accounts.config.json">accounts.config.json</option>';
+      }
     }
 
     function initSocket() {
@@ -205,6 +278,10 @@
       try {
         const stats = await apiFetch('/api/stats');
         const activities = await apiFetch('/api/activities?limit=20');
+        const status = await apiFetch('/api/status');
+        await loadConfigSelectors();
+        await loadAccountOptions();
+        document.getElementById('runProfileSelect').value = status.runProfile || 'vua';
         updateDashboard({ stats: stats.totals, chartData: stats.stats, recentActivities: activities, timestamp: new Date() });
       } catch (e) {
         document.getElementById('activityList').innerHTML = '<div style="color:#c0392b;padding:20px">Cần đăng nhập đúng user/password (mặc định admin / admin123)</div>';

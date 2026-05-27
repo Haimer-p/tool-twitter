@@ -3,6 +3,7 @@ const path = require('path');
 const logger = require('./logger');
 
 const CONFIG_PATH = path.join(process.cwd(), 'accounts.config.json');
+const CONFIGS_DIR = path.join(process.cwd(), 'configs');
 const ACCOUNTS_DIR = path.join(process.cwd(), 'accounts');
 
 function deepMerge(target, source) {
@@ -42,16 +43,52 @@ function resolveAccountProfile(rawAccount, defaults, globalConfig) {
   return merged;
 }
 
-function loadAccountConfig(globalConfig = require('../config')) {
-  if (!fs.existsSync(CONFIG_PATH)) {
+function listConfigFiles() {
+  const files = [];
+  if (fs.existsSync(CONFIGS_DIR)) {
+    for (const file of fs.readdirSync(CONFIGS_DIR)) {
+      if (!file.endsWith('.json')) continue;
+      files.push(path.join(CONFIGS_DIR, file));
+    }
+  }
+  if (fs.existsSync(CONFIG_PATH)) {
+    files.push(CONFIG_PATH);
+  }
+  // preserve order: configs/* first, then accounts.config.json
+  return Array.from(new Set(files));
+}
+
+function resolveConfigPath(configFile) {
+  if (!configFile) return CONFIG_PATH;
+  if (path.isAbsolute(configFile)) return configFile;
+
+  const normalized = configFile.replace(/\\/g, '/');
+  if (normalized.startsWith('configs/')) {
+    return path.join(process.cwd(), normalized);
+  }
+  if (normalized.endsWith('.json')) {
+    return path.join(CONFIGS_DIR, normalized);
+  }
+  return path.join(CONFIGS_DIR, `${normalized}.json`);
+}
+
+function readConfigJson(configPath) {
+  if (!fs.existsSync(configPath)) {
     return null;
   }
-
-  let raw;
   try {
-    raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+    return JSON.parse(fs.readFileSync(configPath, 'utf8'));
   } catch (error) {
-    throw new Error(`Invalid accounts.config.json: ${error.message}`);
+    const fileName = path.basename(configPath);
+    throw new Error(`Invalid ${fileName}: ${error.message}`);
+  }
+}
+
+function loadAccountConfig(globalConfig = require('../config'), options = {}) {
+  const configPath = resolveConfigPath(options.configFile);
+  const raw = readConfigJson(configPath);
+  if (!raw) {
+    return null;
   }
 
   const defaults = raw.defaults || {};
@@ -75,10 +112,15 @@ function loadAccountConfig(globalConfig = require('../config')) {
   }
 
   if (accounts.length === 0) {
-    throw new Error('accounts.config.json has no enabled accounts');
+    throw new Error(`${path.basename(configPath)} has no enabled accounts`);
   }
 
-  return { accounts, parallel };
+  return {
+    accounts,
+    parallel,
+    sourcePath: configPath,
+    sourceName: path.basename(configPath),
+  };
 }
 
 function filterAccountsByName(profiles, names) {
@@ -89,6 +131,9 @@ function filterAccountsByName(profiles, names) {
 
 module.exports = {
   CONFIG_PATH,
+  CONFIGS_DIR,
+  listConfigFiles,
+  resolveConfigPath,
   loadAccountConfig,
   filterAccountsByName,
   resolveAccountProfile,

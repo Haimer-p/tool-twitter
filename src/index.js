@@ -13,7 +13,12 @@ const AIService = require('./ai');
 const Database = require('./database');
 const EngagementBot = require('./engage');
 const Dashboard = require('./dashboard');
-const { loadAccountConfig, filterAccountsByName } = require('./accountConfig');
+const {
+  loadAccountConfig,
+  filterAccountsByName,
+  listConfigFiles,
+  resolveConfigPath,
+} = require('./accountConfig');
 const logger = require('./logger');
 
 let bot = null;
@@ -21,7 +26,52 @@ let dashboard = null;
 let database = null;
 let botRunning = false;
 let shutdownRequested = false;
-let runtimeState = { accounts: [], parallel: { maxConcurrent: 2 } };
+let runtimeState = {
+  accounts: [],
+  parallel: { maxConcurrent: 2 },
+  configFile: 'accounts.config.json',
+  runProfile: 'vua',
+};
+let loginInProgress = false;
+
+const RUN_PROFILES = {
+  yeu: {
+    delays: {
+      betweenActions: { min: 90000, max: 180000 },
+      betweenSearchRounds: { min: 600000, max: 900000 },
+    },
+    interactions: {
+      maxPerDay: 300,
+      maxPerAccountPerRun: 300,
+      keywordsPerRun: 8,
+      tweetsPerKeyword: 8,
+    },
+  },
+  vua: {
+    delays: {
+      betweenActions: { min: 40000, max: 90000 },
+      betweenSearchRounds: { min: 240000, max: 480000 },
+    },
+    interactions: {
+      maxPerDay: 1200,
+      maxPerAccountPerRun: 1200,
+      keywordsPerRun: 14,
+      tweetsPerKeyword: 14,
+    },
+  },
+  manh: {
+    delays: {
+      betweenActions: { min: 8000, max: 25000 },
+      betweenSearchRounds: { min: 45000, max: 120000 },
+    },
+    interactions: {
+      maxPerDay: 5000,
+      maxPerAccountPerRun: 5000,
+      keywordsPerRun: 25,
+      tweetsPerKeyword: 25,
+    },
+  },
+};
 
 function askQuestion(query) {
   const rl = readline.createInterface({
@@ -72,20 +122,64 @@ async function loadProfilesFromCli() {
   }));
 }
 
-async function resolveAccountProfiles() {
-  const loaded = loadAccountConfig(config);
+function applyRunProfile(accounts, runProfile) {
+  const profile = RUN_PROFILES[runProfile] || RUN_PROFILES.vua;
+  return accounts.map((acc) => ({
+    ...acc,
+    delays: {
+      ...acc.delays,
+      ...(profile.delays || {}),
+    },
+    interactions: {
+      ...acc.interactions,
+      ...(profile.interactions || {}),
+    },
+  }));
+}
+
+async function chooseConfigFileFromCli() {
+  const files = listConfigFiles();
+  if (!files.length) return null;
+
+  console.log('\nConfig files:');
+  files.forEach((absPath, idx) => {
+    const rel = path.relative(process.cwd(), absPath).replace(/\\/g, '/');
+    console.log(`${idx + 1}. ${rel}`);
+  });
+  const choice = await askQuestion('Chọn config file (Enter = mặc định số 1): ');
+  const parsed = parseInt(choice.trim(), 10);
+  const picked = Number.isInteger(parsed) && parsed >= 1 && parsed <= files.length ? files[parsed - 1] : files[0];
+  return path.relative(process.cwd(), picked).replace(/\\/g, '/');
+}
+
+async function chooseRunProfileFromCli() {
+  console.log('\nRun profile:');
+  console.log('1. yeu');
+  console.log('2. vua');
+  console.log('3. manh');
+  const choice = await askQuestion('Chọn profile (1-3, Enter = 2): ');
+  const key = (choice || '').trim();
+  if (key === '1' || key.toLowerCase() === 'yeu') return 'yeu';
+  if (key === '3' || key.toLowerCase() === 'manh') return 'manh';
+  return 'vua';
+}
+
+async function resolveAccountProfiles(configFile) {
+  const loaded = loadAccountConfig(config, { configFile });
   if (loaded) {
     logger.info(
-      `Loaded ${loaded.accounts.length} account(s) from accounts.config.json (parallel: ${loaded.parallel.maxConcurrent})`
+      `Loaded ${loaded.accounts.length} account(s) from ${loaded.sourceName} (parallel: ${loaded.parallel.maxConcurrent})`
     );
     return loaded;
   }
 
-  logger.warn('accounts.config.json not found — using CLI input');
+  logger.warn('No config file found — using CLI input');
   const accounts = await loadProfilesFromCli();
   return {
     accounts,
     parallel: { maxConcurrent: config.parallel?.maxConcurrent || 1 },
+    sourcePath: null,
+    sourceName: 'cli',
   };
 }
 
@@ -119,15 +213,77 @@ function handleControl(action, data) {
   }
 
   if (action === 'start') {
-    let profiles = runtimeState.accounts;
+    const nextConfigFile = data?.configFile || runtimeState.configFile;
+    const nextProfile = data?.runProfile || runtimeState.runProfile || 'vua';
+
+    const loaded = loadAccountConfig(config, { configFile: nextConfigFile });
+    if (!loaded) {
+      logger.warn(`Start ignored: config not found (${nextConfigFile})`);
+      return;
+    }
+
+    runtimeState = {
+      ...runtimeState,
+      configFile: path.relative(process.cwd(), loaded.sourcePath).replace(/\\/g, '/'),
+      runProfile: nextProfile,
+      accounts: loaded.accounts,
+      parallel: loaded.parallel,
+    };
+    if (dashboard) dashboard.botState = runtimeState;
+
+    let profiles = applyRunProfile(runtimeState.accounts, runtimeState.runProfile);
     if (data?.accountNames?.length > 0) {
       profiles = filterAccountsByName(profiles, data.accountNames);
     }
     if (profiles.length > 0) {
+      logger.info(
+        `Start with config ${runtimeState.configFile}, profile ${runtimeState.runProfile}, ${profiles.length} account(s)`
+      );
       runBot(profiles, runtimeState.parallel?.maxConcurrent || 2);
     } else {
       logger.warn('Start ignored: no accounts configured');
     }
+  }
+
+  if (action === 'login_account') {
+    const accountName = String(data?.accountName || '').trim();
+    if (!accountName) {
+      logger.warn('Login ignored: account name is empty');
+      return;
+    }
+    if (loginInProgress) {
+      logger.warn('Login ignored: another login is in progress');
+      return;
+    }
+
+    loginInProgress = true;
+    logger.info(`Dashboard login started for ${accountName}`);
+    (async () => {
+      const browserManager = new BrowserManager(config);
+      const authManager = new AuthManager(
+        path.join(process.cwd(), 'accounts'),
+        config.baseUrl
+      );
+      try {
+        await browserManager.launch();
+        const page = await browserManager.newPage();
+        const ok = await authManager.login(page, accountName, {
+          mode: 'dashboard',
+          manualTimeoutMs: 300000,
+        });
+        if (ok) {
+          logger.info(`Dashboard login success: ${accountName}`);
+          if (dashboard) await dashboard.sendStatsUpdate();
+        } else {
+          logger.warn(`Dashboard login failed/timeout: ${accountName}`);
+        }
+      } catch (error) {
+        logger.error(`Dashboard login error for ${accountName}: ${error.message}`);
+      } finally {
+        await browserManager.close().catch(() => null);
+        loginInProgress = false;
+      }
+    })();
   }
 }
 
@@ -175,9 +331,19 @@ async function main() {
   dashboard.app.locals.botRunning = false;
   await dashboard.start(config.dashboard.port);
 
-  const { accounts, parallel } = await resolveAccountProfiles();
+  const selectedConfigFile = await chooseConfigFileFromCli();
+  const selectedRunProfile = await chooseRunProfileFromCli();
+  const { accounts, parallel, sourcePath } = await resolveAccountProfiles(selectedConfigFile);
+  const normalizedConfigFile = sourcePath
+    ? path.relative(process.cwd(), resolveConfigPath(sourcePath)).replace(/\\/g, '/')
+    : selectedConfigFile || 'accounts.config.json';
 
-  runtimeState = { accounts, parallel };
+  runtimeState = {
+    accounts,
+    parallel,
+    configFile: normalizedConfigFile,
+    runProfile: selectedRunProfile,
+  };
   if (dashboard) dashboard.botState = runtimeState;
 
   console.log('\nSchedule:');
@@ -187,7 +353,11 @@ async function main() {
 
   const scheduleChoice = await askQuestion('Choice (1-3): ');
 
-  const run = () => runBot(accounts, parallel.maxConcurrent);
+  const run = () => {
+    const profiles = applyRunProfile(runtimeState.accounts, runtimeState.runProfile);
+    logger.info(`Run profile: ${runtimeState.runProfile} | config: ${runtimeState.configFile}`);
+    return runBot(profiles, runtimeState.parallel.maxConcurrent);
+  };
 
   switch (scheduleChoice.trim()) {
     case '2': {

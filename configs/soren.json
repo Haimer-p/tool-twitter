@@ -35,8 +35,8 @@
       "replyComposerTimeoutMs": 15000,
       "replyPostTimeoutMs": 20000,
       "replyRequiredIncludes": [
-        "https://dexscreener.com/solana/39lnbkbfmesdsvbuddqedw5za43ppbnbeu2dydtaecbl",
-        "KERRY"
+        "https://dexscreener.com/solana/fwkrnkqvfq3txkycfuvtcxlexf8queurhudst24zqf9h",
+        "SOREN"
       ],
       "comboRatios": {
         "like": 0.03,
@@ -56,30 +56,32 @@
       "name": "accquangkhai",
       "enabled": true,
       "keywords": [
-        "KERRY",
-        "$KERRY",
-        "Justice for Kerry Sheron",
-        "J8jbev2qed6fHiMLiguA6PveufMuS4yH1khX1GZ3pump",
-        "KERRY solana",
-        "KERRY memecoin",
-        "KERRY pump",
-        "pumpswap KERRY",
-        "KERRY chart",
-        "solana KERRY",
-        "KERRY token",
-        "buy KERRY"
+        "SOREN",
+        "$SOREN",
+        "Saving Soren",
+        "5qTKp44FvKsBZakm5YWihqVG2UMeQZp1pDRbLMbApump",
+        "SOREN solana",
+        "SOREN trending",
+        "SOREN pump fun",
+        "SOREN top gainer",
+        "solana top pump today",
+        "SOREN chart",
+        "pumpswap SOREN",
+        "SOREN dexscreener",
+        "SOREN new launch",
+        "buy SOREN"
       ],
       "delays": {
         "betweenActions": { "min": 30000, "max": 60000 },
         "betweenSearchRounds": { "min": 180000, "max": 300000 }
       },
       "interactions": {
-        "maxPerDay": 300,
+        "maxPerDay": 1000,
         "maxPerAccountPerRun": 500,
         "keywordsPerRun": 10,
         "replyRequiredIncludes": [
-          "https://dexscreener.com/solana/39lnbkbfmesdsvbuddqedw5za43ppbnbeu2dydtaecbl",
-          "KERRY"
+          "https://dexscreener.com/solana/fwkrnkqvfq3txkycfuvtcxlexf8queurhudst24zqf9h",
+          "SOREN"
         ],
         "comboRatios": {
           "like": 0.03,
@@ -98,30 +100,32 @@
       "name": "accnhattan",
       "enabled": true,
       "keywords": [
-        "KERRY",
-        "$KERRY",
-        "Justice for Kerry Sheron",
-        "J8jbev2qed6fHiMLiguA6PveufMuS4yH1khX1GZ3pump",
-        "KERRY solana",
-        "KERRY memecoin",
-        "KERRY dex",
-        "KERRY airdrop",
-        "$KERRY solana",
-        "KERRY pumpswap",
-        "KERRY moon",
-        "KERRY crypto"
+        "SOREN",
+        "$SOREN",
+        "Saving Soren",
+        "5qTKp44FvKsBZakm5YWihqVG2UMeQZp1pDRbLMbApump",
+        "SOREN solana",
+        "SOREN trending",
+        "SOREN pump fun",
+        "latest solana gem",
+        "new solana memecoin",
+        "SOREN moon",
+        "$SOREN solana",
+        "SOREN pumpswap",
+        "top trending memecoin",
+        "saving soren solana"
       ],
       "delays": {
         "betweenActions": { "min": 30000, "max": 60000 },
         "betweenSearchRounds": { "min": 180000, "max": 300000 }
       },
       "interactions": {
-        "maxPerDay": 300,
+        "maxPerDay": 1000,
         "maxPerAccountPerRun": 500,
         "keywordsPerRun": 20,
         "replyRequiredIncludes": [
-          "https://dexscreener.com/solana/39lnbkbfmesdsvbuddqedw5za43ppbnbeu2dydtaecbl",
-          "KERRY"
+          "https://dexscreener.com/solana/fwkrnkqvfq3txkycfuvtcxlexf8queurhudst24zqf9h",
+          "SOREN"
         ],
         "comboRatios": {
           "like": 0.03,
@@ -140,30 +144,32 @@
       "name": "acckingchiton",
       "enabled": true,
       "keywords": [
-        "KERRY",
-        "$KERRY",
-        "Justice for Kerry Sheron",
-        "J8jbev2qed6fHiMLiguA6PveufMuS4yH1khX1GZ3pump",
-        "KERRY solana",
-        "KERRY memecoin",
-        "KERRY dexscreener",
-        "Justice for Kerry pump",
-        "KERRY community",
-        "Kerry Sheron solana",
-        "KERRY veteran",
-        "gofundme Kerry"
+        "SOREN",
+        "$SOREN",
+        "Saving Soren",
+        "5qTKp44FvKsBZakm5YWihqVG2UMeQZp1pDRbLMbApump",
+        "SOREN solana",
+        "SOREN trending",
+        "SOREN pump fun",
+        "just launched SOREN",
+        "fresh solana pump",
+        "SOREN community",
+        "SOREN crypto",
+        "new pump solana",
+        "dexscreener trending solana",
+        "SOREN memecoin"
       ],
       "delays": {
         "betweenActions": { "min": 30000, "max": 60000 },
         "betweenSearchRounds": { "min": 180000, "max": 300000 }
       },
       "interactions": {
-        "maxPerDay": 300,
-        "maxPerAccountPerRun": 500,
+        "maxPerDay": 1000,
+        "maxPerAccountPerRun": 5000,
         "keywordsPerRun": 20,
         "replyRequiredIncludes": [
-          "https://dexscreener.com/solana/39lnbkbfmesdsvbuddqedw5za43ppbnbeu2dydtaecbl",
-          "KERRY"
+          "https://dexscreener.com/solana/fwkrnkqvfq3txkycfuvtcxlexf8queurhudst24zqf9h",
+          "SOREN"
         ],
         "comboRatios": {
           "like": 0.03,

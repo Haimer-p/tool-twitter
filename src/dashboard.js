@@ -3,7 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs').promises;
-const { CONFIG_PATH } = require('./accountConfig');
+const { CONFIG_PATH, CONFIGS_DIR, listConfigFiles, resolveConfigPath } = require('./accountConfig');
 const logger = require('./logger');
 
 class Dashboard {
@@ -16,6 +16,10 @@ class Dashboard {
     this.io = new Server(this.server);
     this.clients = new Set();
     this.statsInterval = null;
+    this.botState = {
+      configFile: 'accounts.config.json',
+      runProfile: 'vua',
+    };
   }
 
   authMiddleware() {
@@ -79,18 +83,39 @@ class Dashboard {
 
     this.app.get('/api/account-config', auth, async (req, res) => {
       try {
-        const raw = await fs.readFile(CONFIG_PATH, 'utf8').catch(() => null);
+        const target = req.query.file
+          ? resolveConfigPath(String(req.query.file))
+          : resolveConfigPath(this.botState?.configFile || CONFIG_PATH);
+        const raw = await fs.readFile(target, 'utf8').catch(() => null);
         if (!raw) {
           return res.json({ source: 'defaults', config: null });
         }
-        res.json({ source: 'accounts.config.json', config: JSON.parse(raw) });
+        res.json({
+          source: path.relative(process.cwd(), target).replace(/\\/g, '/'),
+          config: JSON.parse(raw),
+        });
       } catch (error) {
         res.status(500).json({ error: error.message });
       }
     });
 
+    this.app.get('/api/config-files', auth, (_req, res) => {
+      const files = listConfigFiles().map((absPath) =>
+        path.relative(process.cwd(), absPath).replace(/\\/g, '/')
+      );
+      res.json({
+        files,
+        activeConfigFile: this.botState?.configFile || 'accounts.config.json',
+        configDir: path.relative(process.cwd(), CONFIGS_DIR).replace(/\\/g, '/'),
+      });
+    });
+
     this.app.get('/api/status', auth, (req, res) => {
-      res.json({ running: req.app.locals.botRunning || false });
+      res.json({
+        running: req.app.locals.botRunning || false,
+        activeConfigFile: this.botState?.configFile || 'accounts.config.json',
+        runProfile: this.botState?.runProfile || 'vua',
+      });
     });
 
     this.app.post('/api/control/start', auth, (req, res) => {
@@ -103,6 +128,12 @@ class Dashboard {
       this.io.emit('control', { action: 'stop' });
       this.onControl('stop');
       res.json({ success: true, message: 'Stop command sent' });
+    });
+
+    this.app.post('/api/control/login-account', auth, (req, res) => {
+      this.io.emit('control', { action: 'login_account', data: req.body });
+      this.onControl('login_account', req.body);
+      res.json({ success: true, message: 'Login command sent' });
     });
 
     this.app.get('/', auth, (req, res) => {

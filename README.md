@@ -201,6 +201,25 @@ File chính điều khiển **account nào chạy**, **keyword**, **delay**, **g
 
 Mẫu đầy đủ: `accounts.config.example.json`.
 
+### Nhiều file config token trong `configs/`
+
+- Bạn có thể lưu nhiều file theo token trong thư mục `configs/` (vd: `configs/soren.json`, `configs/grail.json`).
+- Khi chạy `npm start`, terminal sẽ cho chọn file config trước khi vào menu schedule.
+- Dashboard cũng có dropdown để chọn file config trước khi bấm **Chạy bot**.
+- Nếu không chọn gì, app sẽ fallback về `accounts.config.json`.
+
+---
+
+## Chế độ chạy `yếu / vừa / mạnh`
+
+Bạn có thể chọn profile chạy từ terminal hoặc dashboard:
+
+- `yếu`: delay cao, hạn mức thấp (an toàn hơn)
+- `vừa`: cân bằng tốc độ và hạn mức
+- `mạnh`: delay thấp, đẩy nhanh tốc độ, `maxPerDay = 5000`, `maxPerAccountPerRun = 5000`
+
+Profile được áp ở runtime (không ghi đè file config gốc), nên bạn có thể tái sử dụng cùng một file token với nhiều mức chạy khác nhau.
+
 ---
 
 ## Chạy bot

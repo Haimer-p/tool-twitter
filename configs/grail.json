@@ -35,8 +35,8 @@
       "replyComposerTimeoutMs": 15000,
       "replyPostTimeoutMs": 20000,
       "replyRequiredIncludes": [
-        "https://dexscreener.com/solana/fwkrnkqvfq3txkycfuvtcxlexf8queurhudst24zqf9h",
-        "SOREN"
+        "https://dexscreener.com/solana/uvn1zvzjom7d4cpuhjjrbd6y82k5tsefrqmzhhxjjfm",
+        "grail"
       ],
       "comboRatios": {
         "like": 0.03,
@@ -56,32 +56,32 @@
       "name": "accquangkhai",
       "enabled": true,
       "keywords": [
-        "SOREN",
-        "$SOREN",
-        "Saving Soren",
-        "5qTKp44FvKsBZakm5YWihqVG2UMeQZp1pDRbLMbApump",
-        "SOREN solana",
-        "SOREN trending",
-        "SOREN pump fun",
-        "SOREN top gainer",
+        "grail",
+        "$grail",
+        "grail solana",
+        "3x6apzqJKgf33zet8CbkAx7LogqkRhNX6FiRzVA5pump",
+        "grail trending",
+        "grail pump fun",
+        "grail memecoin",
+        "grail top gainer",
         "solana top pump today",
-        "SOREN chart",
-        "pumpswap SOREN",
-        "SOREN dexscreener",
-        "SOREN new launch",
-        "buy SOREN"
+        "grail chart",
+        "pumpswap grail",
+        "grail dexscreener",
+        "grail new launch",
+        "buy grail"
       ],
       "delays": {
         "betweenActions": { "min": 30000, "max": 60000 },
         "betweenSearchRounds": { "min": 180000, "max": 300000 }
       },
       "interactions": {
-        "maxPerDay": 1000,
+        "maxPerDay": 300,
         "maxPerAccountPerRun": 500,
         "keywordsPerRun": 10,
         "replyRequiredIncludes": [
-          "https://dexscreener.com/solana/fwkrnkqvfq3txkycfuvtcxlexf8queurhudst24zqf9h",
-          "SOREN"
+          "https://dexscreener.com/solana/uvn1zvzjom7d4cpuhjjrbd6y82k5tsefrqmzhhxjjfm",
+          "grail"
         ],
         "comboRatios": {
           "like": 0.03,
@@ -100,32 +100,32 @@
       "name": "accnhattan",
       "enabled": true,
       "keywords": [
-        "SOREN",
-        "$SOREN",
-        "Saving Soren",
-        "5qTKp44FvKsBZakm5YWihqVG2UMeQZp1pDRbLMbApump",
-        "SOREN solana",
-        "SOREN trending",
-        "SOREN pump fun",
+        "grail",
+        "$grail",
+        "grail solana",
+        "3x6apzqJKgf33zet8CbkAx7LogqkRhNX6FiRzVA5pump",
+        "grail trending",
+        "grail pump fun",
+        "grail memecoin",
         "latest solana gem",
         "new solana memecoin",
-        "SOREN moon",
-        "$SOREN solana",
-        "SOREN pumpswap",
+        "grail moon",
+        "$grail solana",
+        "grail pumpswap",
         "top trending memecoin",
-        "saving soren solana"
+        "holy grail solana"
       ],
       "delays": {
         "betweenActions": { "min": 30000, "max": 60000 },
         "betweenSearchRounds": { "min": 180000, "max": 300000 }
       },
       "interactions": {
-        "maxPerDay": 1000,
+        "maxPerDay": 300,
         "maxPerAccountPerRun": 500,
         "keywordsPerRun": 20,
         "replyRequiredIncludes": [
-          "https://dexscreener.com/solana/fwkrnkqvfq3txkycfuvtcxlexf8queurhudst24zqf9h",
-          "SOREN"
+          "https://dexscreener.com/solana/uvn1zvzjom7d4cpuhjjrbd6y82k5tsefrqmzhhxjjfm",
+          "grail"
         ],
         "comboRatios": {
           "like": 0.03,
@@ -144,32 +144,32 @@
       "name": "acckingchiton",
       "enabled": true,
       "keywords": [
-        "SOREN",
-        "$SOREN",
-        "Saving Soren",
-        "5qTKp44FvKsBZakm5YWihqVG2UMeQZp1pDRbLMbApump",
-        "SOREN solana",
-        "SOREN trending",
-        "SOREN pump fun",
-        "just launched SOREN",
+        "grail",
+        "$grail",
+        "grail solana",
+        "3x6apzqJKgf33zet8CbkAx7LogqkRhNX6FiRzVA5pump",
+        "grail trending",
+        "grail pump fun",
+        "grail memecoin",
+        "just launched grail",
         "fresh solana pump",
-        "SOREN community",
-        "SOREN crypto",
+        "grail community",
+        "grail crypto",
         "new pump solana",
         "dexscreener trending solana",
-        "SOREN memecoin"
+        "grail solana pump"
       ],
       "delays": {
         "betweenActions": { "min": 30000, "max": 60000 },
         "betweenSearchRounds": { "min": 180000, "max": 300000 }
       },
       "interactions": {
-        "maxPerDay": 1000,
-        "maxPerAccountPerRun": 5000,
+        "maxPerDay": 300,
+        "maxPerAccountPerRun": 500,
         "keywordsPerRun": 20,
         "replyRequiredIncludes": [
-          "https://dexscreener.com/solana/fwkrnkqvfq3txkycfuvtcxlexf8queurhudst24zqf9h",
-          "SOREN"
+          "https://dexscreener.com/solana/uvn1zvzjom7d4cpuhjjrbd6y82k5tsefrqmzhhxjjfm",
+          "grail"
         ],
         "comboRatios": {
           "like": 0.03,
