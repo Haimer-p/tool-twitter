@@ -69,7 +69,10 @@
         "pumpswap hypu",
         "hypu dexscreener",
         "hypu new launch",
-        "buy hypu"
+        "buy hypu",
+        "hypu breakout",
+        "hypu volume",
+        "perpad hypu"
       ],
       "delays": {
         "betweenActions": { "min": 30000, "max": 60000 },
@@ -113,7 +116,10 @@
         "$hypu solana",
         "hypu pumpswap",
         "top trending memecoin",
-        "hypu memecoin"
+        "hypu memecoin",
+        "hypu alpha",
+        "hypu call",
+        "hypu entry"
       ],
       "delays": {
         "betweenActions": { "min": 30000, "max": 60000 },
@@ -157,7 +163,10 @@
         "hypu crypto",
         "new pump solana",
         "dexscreener trending solana",
-        "hypu solana pump"
+        "hypu solana pump",
+        "hypu narrative",
+        "hypu whale",
+        "hypu momentum"
       ],
       "delays": {
         "betweenActions": { "min": 30000, "max": 60000 },

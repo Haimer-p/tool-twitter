@@ -1,6 +1,7 @@
 node_modules/
 .env
 accounts/*.json
+configs/
 logs/
 *.log
 .DS_Store
