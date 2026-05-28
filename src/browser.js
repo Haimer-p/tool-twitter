@@ -25,9 +25,13 @@ class BrowserManager {
       args.push(`--proxy-server=${this.config.browser.proxy}`);
     }
 
+    const protocolTimeout =
+      this.config.browser.protocolTimeout || parseInt(process.env.BROWSER_PROTOCOL_TIMEOUT || '180000', 10);
+
     this.browser = await puppeteer.launch({
       headless: this.config.browser.headless,
       args,
+      protocolTimeout,
     });
 
     logger.info('Browser launched');
@@ -39,11 +43,33 @@ class BrowserManager {
       await this.launch();
     }
     const page = await this.browser.newPage();
+    const defaultTimeout =
+      this.config.browser.defaultTimeout || parseInt(process.env.BROWSER_DEFAULT_TIMEOUT || '60000', 10);
+    page.setDefaultTimeout(defaultTimeout);
+    page.setDefaultNavigationTimeout(
+      this.config.browser.navigationTimeout || parseInt(process.env.BROWSER_NAV_TIMEOUT || '45000', 10)
+    );
     await page.setViewport(this.config.browser.viewport);
     await page.setUserAgent(this.config.browser.userAgent);
 
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    });
+
+    page.on('dialog', async (dialog) => {
+      try {
+        const msg = dialog.message();
+        logger.info(`Browser dialog [${dialog.type()}]: ${msg.slice(0, 100)}`);
+        const leavePrompt =
+          dialog.type() === 'beforeunload' || /leave site|changes you made/i.test(msg);
+        if (leavePrompt) {
+          await dialog.dismiss();
+        } else {
+          await dialog.accept();
+        }
+      } catch (err) {
+        logger.warn(`Không đóng được dialog: ${err.message}`);
+      }
     });
 
     return page;

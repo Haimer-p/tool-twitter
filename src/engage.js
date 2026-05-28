@@ -10,8 +10,23 @@ const SELECTORS = {
   retweet: 'button[data-testid="retweet"]',
   retweetConfirm: 'button[data-testid="retweetConfirm"]',
   reply: 'button[data-testid="reply"]',
+  mainTweetReply: 'article[data-testid="tweet"] button[data-testid="reply"]',
+  mainTweetLike: 'article[data-testid="tweet"] button[data-testid="like"]',
+  mainTweetUnlike: 'article[data-testid="tweet"] button[data-testid="unlike"]',
+  mainTweetRetweet: 'article[data-testid="tweet"] button[data-testid="retweet"]',
   replyBox: 'div[data-testid="tweetTextarea_0"]',
+  replyEditable: 'div[data-testid="tweetTextarea_0"] div[contenteditable="true"]',
+  replyComposerSelectors: [
+    'div[data-testid="tweetTextarea_0"] div[contenteditable="true"]',
+    'div[data-testid="tweetTextarea_0"] [role="textbox"]',
+    'div[role="dialog"] div[data-testid="tweetTextarea_0"] div[contenteditable="true"]',
+    'div[role="dialog"] [contenteditable="true"][role="textbox"]',
+    'div[data-testid="tweetTextarea_1"] div[contenteditable="true"]',
+    '[data-testid="tweetTextarea_0"] [contenteditable="true"]',
+    'div.public-DraftEditor-content[contenteditable="true"]',
+  ],
   tweetButton: 'button[data-testid="tweetButton"]',
+  tweetButtonInline: 'button[data-testid="tweetButtonInline"]',
   follow: '[data-testid$="-follow"]:not([data-testid*="unfollow"])',
   unfollow: 'button[data-testid$="-unfollow"]',
   unfollowConfirm: 'button[data-testid="confirmationSheetConfirm"]',
@@ -71,12 +86,13 @@ class EngagementBot {
           'tiếp tục',
           'continue',
         ];
-        document
-          .querySelectorAll('[role="dialog"] button, [data-testid="sheetDialog"] button')
-          .forEach((btn) => {
+        document.querySelectorAll('[role="dialog"]').forEach((dialog) => {
+          if (dialog.querySelector('[data-testid="tweetTextarea_0"]')) return;
+          dialog.querySelectorAll('button').forEach((btn) => {
             const t = (btn.innerText || btn.textContent || '').trim().toLowerCase();
             if (acceptLabels.some((l) => t === l || t.startsWith(`${l} `))) tryClick(btn);
           });
+        });
 
         document.querySelectorAll('[data-testid="app-bar-close"]').forEach((btn) => {
           if (btn.closest('[role="dialog"]')) tryClick(btn);
@@ -104,20 +120,82 @@ class EngagementBot {
     }
   }
 
-  async fillReplyText(page, selector, text, meta = {}) {
-    await page.click(selector);
-    await page.keyboard.down('Control');
-    await page.keyboard.press('KeyA');
-    await page.keyboard.up('Control');
-    await page.keyboard.press('Backspace');
+  async waitForReplyComposer(page, timeout = 15000) {
+    const selectors = SELECTORS.replyComposerSelectors;
+    const deadline = Date.now() + timeout;
 
-    if (meta.botMode === 'airdrop') {
-      const t = this.config.airdrop?.typing || { min: 5, max: 20 };
-      await this.typeWithInputDelays(page, text, t);
-      return;
+    while (Date.now() < deadline) {
+      const found = await page.evaluate((sels) => {
+        for (const sel of sels) {
+          const el = document.querySelector(sel);
+          if (!el) continue;
+          const r = el.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0) return sel;
+        }
+        return null;
+      }, selectors);
+
+      if (found) return found;
+      await sleep(300);
     }
 
-    await this.typeWithInputDelays(page, text, this.config.delays.typing);
+    throw new Error('Không tìm thấy ô nhập reply (composer chưa mở)');
+  }
+
+  async openReplyComposer(page, tweetUrl, { quick = false } = {}) {
+    const onTweet = this.isOnTweetPage(page, tweetUrl);
+    await this.ensureTweetPage(page, tweetUrl);
+    if (!onTweet || !quick) {
+      await this.randomDelay(1500, 3000);
+    } else {
+      await sleep(400);
+    }
+
+    let replyButton =
+      (await page.$(SELECTORS.mainTweetReply)) || (await page.$(SELECTORS.reply));
+    if (!replyButton) {
+      throw new Error('Không tìm thấy nút Reply trên tweet');
+    }
+
+    await replyButton.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+    await replyButton.click();
+    await sleep(600);
+
+    try {
+      return await this.waitForReplyComposer(page, 12000);
+    } catch {
+      await replyButton.click();
+      await sleep(800);
+      return await this.waitForReplyComposer(page, 12000);
+    }
+  }
+
+  async fillReplyText(page, text, editableSel, meta = {}) {
+    await page.click(editableSel);
+
+    const filled = await page.evaluate((sel, val) => {
+      const el = document.querySelector(sel);
+      if (!el) return false;
+      el.focus();
+      el.innerHTML = '';
+      const ok = document.execCommand('insertText', false, val);
+      el.dispatchEvent(
+        new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: val })
+      );
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return ok || (el.innerText || el.textContent || '').includes(val.slice(0, 8));
+    }, editableSel, text);
+
+    if (!filled) {
+      await page.click(editableSel);
+      await page.keyboard.type(text, { delay: meta.botMode === 'airdrop' ? 0 : 30 });
+      await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        if (el) el.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      }, editableSel);
+    }
+
+    await sleep(400);
   }
 
   isRetryableReplyError(error) {
@@ -243,16 +321,20 @@ class EngagementBot {
 
   async likeTweet(page, tweetUrl, meta) {
     try {
-      await page.goto(tweetUrl, { waitUntil: 'domcontentloaded' });
-      await this.randomDelay(2000, 3000);
+      await this.gotoTweetPage(page, tweetUrl);
+      const isAirdrop = meta.botMode === 'airdrop';
+      await this.randomDelay(isAirdrop ? 1000 : 2000, isAirdrop ? 2000 : 3000);
       await this.dismissTwitterDialogs(page);
 
-      const unlike = await page.$(SELECTORS.unlike);
+      const unlike =
+        (await page.$(SELECTORS.mainTweetUnlike)) || (await page.$(SELECTORS.unlike));
       if (unlike) return false;
 
-      const likeButton = await page.$(SELECTORS.like);
+      const likeButton =
+        (await page.$(SELECTORS.mainTweetLike)) || (await page.$(SELECTORS.like));
       if (!likeButton) return false;
 
+      await likeButton.evaluate((el) => el.scrollIntoView({ block: 'center' }));
       await likeButton.click();
       logger.info(`Liked: ${tweetUrl}`);
 
@@ -282,20 +364,24 @@ class EngagementBot {
 
   async retweet(page, tweetUrl, meta) {
     try {
-      await page.goto(tweetUrl, { waitUntil: 'domcontentloaded' });
+      await this.gotoTweetPage(page, tweetUrl);
+      const isAirdrop = meta.botMode === 'airdrop';
       await this.randomDelay(
-        this.config.delays.pageLoad?.min || 3000,
-        this.config.delays.pageLoad?.max || 6000
+        isAirdrop ? 1000 : this.config.delays.pageLoad?.min || 3000,
+        isAirdrop ? 2000 : this.config.delays.pageLoad?.max || 6000
       );
       await this.dismissTwitterDialogs(page);
 
-      const alreadyRetweeted = await page.$('[data-testid="unretweet"]');
+      const alreadyRetweeted =
+        (await page.$('article[data-testid="tweet"] [data-testid="unretweet"]')) ||
+        (await page.$('[data-testid="unretweet"]'));
       if (alreadyRetweeted) {
         logger.info(`Already retweeted: ${tweetUrl}`);
         return false;
       }
 
-      const retweetButton = await page.$(SELECTORS.retweet);
+      const retweetButton =
+        (await page.$(SELECTORS.mainTweetRetweet)) || (await page.$(SELECTORS.retweet));
       if (!retweetButton) {
         logger.warn(`Retweet button not found: ${tweetUrl}`);
         return false;
@@ -336,7 +422,6 @@ class EngagementBot {
   async engageBeforeComment(page, tweetUrl, meta) {
     const engageMeta = { ...meta, botMode: meta.botMode || 'airdrop' };
     const doLikeRt = meta.engageOnReply !== false;
-    const followAuthor = meta.followOnReply !== false;
     let count = 0;
 
     if (
@@ -363,16 +448,90 @@ class EngagementBot {
       await this.randomDelay(2000, 4000);
     }
 
-    if (followAuthor && meta.author) {
-      const followed = await this.followUser(page, meta.author, {
-        ...engageMeta,
-        walletType: 'follow',
-        minFollowersToFollow: meta.minFollowersToFollow,
+    return count;
+  }
+
+  async followAuthorAfterEngage(page, meta) {
+    if (meta.followOnReply === false || !meta.author) return false;
+    if (await this.db.hasFollowedUser(meta.author, this.currentAccount)) return false;
+
+    const followed = await this.followUser(page, meta.author, {
+      ...meta,
+      botMode: meta.botMode || 'airdrop',
+      walletType: 'follow',
+      minFollowersToFollow: meta.minFollowersToFollow,
+    });
+    return followed;
+  }
+
+  /** Inline reply dùng tweetButtonInline; modal dùng tweetButton */
+  async submitReply(page) {
+    const deadline = Date.now() + 15000;
+    const buttonSelectors = [
+      'button[data-testid="tweetButtonInline"]',
+      'button[data-testid="tweetButton"]',
+      '[data-testid="tweetButtonInline"]',
+      '[data-testid="tweetButton"]',
+    ];
+
+    while (Date.now() < deadline) {
+      const clicked = await page.evaluate((sels) => {
+        const enabled = (btn) =>
+          btn &&
+          !btn.disabled &&
+          btn.getAttribute('aria-disabled') !== 'true' &&
+          window.getComputedStyle(btn).pointerEvents !== 'none';
+
+        for (const sel of sels) {
+          const nodes = document.querySelectorAll(sel);
+          for (const btn of nodes) {
+            if (enabled(btn)) {
+              btn.click();
+              return sel;
+            }
+          }
+        }
+        return null;
+      }, buttonSelectors);
+
+      if (clicked) {
+        logger.info(`Đã bấm nút gửi: ${clicked}`);
+        return true;
+      }
+
+      await page.keyboard.down('Control');
+      await page.keyboard.press('Enter');
+      await page.keyboard.up('Control');
+
+      const maybeSent = await page.evaluate(() => {
+        const el = document.querySelector('div[data-testid="tweetTextarea_0"] div[contenteditable="true"]');
+        return !el || !(el.innerText || el.textContent || '').trim();
       });
-      if (followed) count++;
+      if (maybeSent) {
+        logger.info('Đã gửi reply bằng Ctrl+Enter');
+        return true;
+      }
+
+      await sleep(200);
     }
 
-    return count;
+    return false;
+  }
+
+  async waitForReplySent(page) {
+    try {
+      await page.waitForFunction(
+        () => {
+          const box = document.querySelector('div[data-testid="tweetTextarea_0"]');
+          if (!box) return true;
+          const t = (box.innerText || box.textContent || '').trim();
+          return t.length === 0;
+        },
+        { timeout: 12000 }
+      );
+    } catch {
+      await sleep(800);
+    }
   }
 
   /** @deprecated use engageBeforeComment */
@@ -386,44 +545,29 @@ class EngagementBot {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        if (reusePage && attempt === 1) {
-          await this.ensureTweetPage(page, tweetUrl);
-        } else {
-          await this.ensureTweetPage(page, tweetUrl, { forceReload: attempt > 1 });
+        if (attempt > 1) {
+          await this.ensureTweetPage(page, tweetUrl, { forceReload: true });
+          await sleep(1000);
         }
 
-        const loadMin = reusePage ? 800 : this.config.delays.pageLoad?.min || 3000;
-        const loadMax = reusePage ? 1500 : this.config.delays.pageLoad?.max || 6000;
-        await this.randomDelay(loadMin, loadMax);
         await this.dismissTwitterDialogs(page);
-
         logger.info(`Reply: "${replyText.substring(0, 80)}..."`);
 
-        const replyButton = await page.$(SELECTORS.reply);
-        if (!replyButton) {
-          await this.dismissTwitterDialogs(page);
-          return false;
+        const editableSel = await this.openReplyComposer(page, tweetUrl, {
+          quick: reusePage && attempt === 1,
+        });
+        await this.fillReplyText(page, replyText, editableSel, meta);
+
+        const posted = await this.submitReply(page);
+        if (!posted) {
+          throw new Error('Nút Reply chưa sáng / không bấm được');
         }
 
-        await replyButton.click();
-        await this.randomDelay(800, 1200);
-        await this.dismissTwitterDialogs(page);
-
-        const replyBox = await page.$(SELECTORS.replyBox);
-        if (!replyBox) return false;
-
-        await replyBox.click();
-        await this.fillReplyText(page, SELECTORS.replyBox, replyText, meta);
-        await this.dismissTwitterDialogs(page);
-
-        const postButton = await page.$(SELECTORS.tweetButton);
-        if (!postButton) return false;
-
-        await postButton.click();
+        await this.waitForReplySent(page);
         if (meta.botMode !== 'airdrop') {
           await this.randomDelay(1500, 2500);
         } else {
-          await sleep(400);
+          await sleep(300);
         }
         await this.dismissTwitterDialogs(page);
         logger.info(`Replied: ${tweetUrl.substring(0, 60)}...`);

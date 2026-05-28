@@ -33,7 +33,9 @@ module.exports = {
 
   browser: {
     headless: process.env.BROWSER_HEADLESS === 'true',
-    navigationTimeout: parseInt(process.env.BROWSER_NAV_TIMEOUT || '30000', 10),
+    navigationTimeout: parseInt(process.env.BROWSER_NAV_TIMEOUT || '45000', 10),
+    defaultTimeout: parseInt(process.env.BROWSER_DEFAULT_TIMEOUT || '60000', 10),
+    protocolTimeout: parseInt(process.env.BROWSER_PROTOCOL_TIMEOUT || '180000', 10),
     userAgent:
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     viewport: { width: 1280, height: 800 },

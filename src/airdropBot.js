@@ -17,16 +17,12 @@ class AirdropBot extends EngagementBot {
   }
 
   async engageTweetBeforeReply(page, tweetUrl, meta) {
-    if (!this.engageOnReply && !this.followOnReply) return 0;
-    logger.info(
-      `Engage trước comment (like/RT/follow): ${tweetUrl.substring(0, 60)}...`
-    );
+    if (!this.engageOnReply) return 0;
+    logger.info(`Engage trước comment (like/RT): ${tweetUrl.substring(0, 60)}...`);
     return this.engageBeforeComment(page, tweetUrl, {
       ...meta,
       botMode: 'airdrop',
-      engageOnReply: this.engageOnReply,
-      followOnReply: this.followOnReply,
-      minFollowersToFollow: this.minFollowersToFollow,
+      engageOnReply: true,
     });
   }
 
@@ -47,20 +43,34 @@ class AirdropBot extends EngagementBot {
     return this.config.delays.betweenActions;
   }
 
+  normalizeReplyForPost(text, walletType) {
+    const wallets = this.config.wallets;
+    if (walletType === 'evm' && wallets.evm) return wallets.evm;
+    if (walletType === 'solana' && wallets.solana) return wallets.solana;
+    return String(text || '').trim().slice(0, 100);
+  }
+
   async buildReplyText(walletType, tweetContent) {
     const wallets = this.config.wallets;
+    let text = '';
 
     if (this.useAi) {
-      return this.ai.generateAirdropReply(
+      text = await this.ai.generateAirdropReply(
         tweetContent.text,
         tweetContent.author,
         walletType,
         wallets
       );
+    } else {
+      const comments = buildRuleComments(walletType, this.config);
+      text = comments[0] || '';
     }
 
-    const comments = buildRuleComments(walletType, this.config);
-    return comments[0] || '';
+    const normalized = this.normalizeReplyForPost(text, walletType);
+    if (this.useAi && normalized !== text.trim()) {
+      logger.info(`Airdrop reply → chỉ gửi địa chỉ ${walletType} (ổn định nút Reply)`);
+    }
+    return normalized;
   }
 
   async prepareAirdropReplies(tweetContent, plan, tweetId) {
@@ -208,6 +218,16 @@ class AirdropBot extends EngagementBot {
             );
 
             if (success) interactionsThisRun++;
+          }
+
+          if (this.followOnReply) {
+            const followed = await this.followAuthorAfterEngage(page, {
+              ...meta,
+              botMode: 'airdrop',
+              followOnReply: true,
+              minFollowersToFollow: this.minFollowersToFollow,
+            });
+            if (followed) interactionsThisRun++;
           }
 
           await this.randomDelay(

@@ -98,6 +98,14 @@ class AIService {
     return /429|quota exceeded|too many requests/i.test(msg);
   }
 
+  isGeminiDisabledError(error) {
+    const msg = error?.message || '';
+    return (
+      this.isQuotaError(error) ||
+      /403|forbidden|leaked|api key not valid|invalid.*api key/i.test(msg)
+    );
+  }
+
   async generateWithFallback(prompt, maxLen = null) {
     const providers = this.getProviderOrder();
     if (providers.length === 0) {
@@ -118,9 +126,9 @@ class AIService {
         return text;
       } catch (error) {
         lastError = error;
-        if (provider === 'gemini' && this.isQuotaError(error)) {
+        if (provider === 'gemini' && this.isGeminiDisabledError(error)) {
           this.geminiQuotaExceeded = true;
-          logger.warn('Gemini hết quota — chuyển sang DeepSeek cho các lần sau');
+          logger.warn('Gemini không dùng được — chỉ dùng DeepSeek cho các lần sau');
         } else {
           logger.warn(`${provider} failed: ${error.message}`);
         }
