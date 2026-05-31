@@ -37,6 +37,7 @@ const COMBO_MAP = {
   like_retweet_reply: ['reply', 'retweet', 'like'],
   like_follow: ['like', 'follow'],
   like_retweet_follow: ['like', 'retweet', 'follow'],
+  like_retweet_reply_follow: ['reply', 'retweet', 'like', 'follow'],
 };
 
 const COMBO_DELAY = { min: 3000, max: 8000 };

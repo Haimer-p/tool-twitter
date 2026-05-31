@@ -281,6 +281,7 @@ Mỗi tweet bot chọn **một combo** theo tỷ lệ `comboRatios`:
 | `like_retweet_reply` | Like → Retweet → Comment AI |
 | `like_follow` | Like → Follow (có lọc follower) |
 | `like_retweet_follow` | Like → RT → Follow |
+| `like_retweet_reply_follow` | Like → RT → Comment AI → Follow |
 
 Tổng các giá trị trong `comboRatios` nên = **1.0**.
 

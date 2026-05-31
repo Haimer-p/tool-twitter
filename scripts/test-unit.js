@@ -79,6 +79,15 @@ test('finalizeReply appends missing link', () => {
   assert.ok(out.includes('dexscreener.com'));
   assert.ok(out.includes('Nice chart'));
 });
+test('finalizeReply appends missing wallet address', () => {
+  const wallet = 'BbCqBPtnvv3BYsGQRjuiNEDFbRXSMxkrCYmuPQcT5nUq';
+  const out = aiTest.finalizeReply('LFG airdrop!', {
+    requiredIncludes: [wallet],
+    maxLength: 280,
+  });
+  assert.ok(out.includes(wallet));
+  assert.ok(out.includes('LFG airdrop!'));
+});
 test('finalizeReply dedupes duplicate dex URLs', () => {
   const link = 'https://dexscreener.com/solana/9gs19u3zuy8m4ujqoztv1xa6fnu6j9zguze8jypey9dp';
   const dup = `Chart looks good ${link} ${link} Boomerang`;
@@ -118,6 +127,8 @@ test('like_reply runs reply before like', () => {
   assert.deepStrictEqual(combo, ['reply', 'like']);
   const combo3 = mockBot.decideActionCombo({ like_retweet_reply: 1 });
   assert.deepStrictEqual(combo3, ['reply', 'retweet', 'like']);
+  const combo4 = mockBot.decideActionCombo({ like_retweet_reply_follow: 1 });
+  assert.deepStrictEqual(combo4, ['reply', 'retweet', 'like', 'follow']);
 });
 test('getReplyTimeouts uses config defaults', () => {
   const ctx = {

@@ -32,33 +32,67 @@ class AIService {
     };
   }
 
+  isWalletAddress(value) {
+    const text = String(value).trim();
+    if (/^0x[a-fA-F0-9]{40}$/.test(text)) return true;
+    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(text)) return true;
+    return false;
+  }
+
   buildPrompt(tweetText, tweetAuthor, context, replyOptions = {}) {
     const { requiredIncludes, maxLength } = this.normalizeReplyOptions(replyOptions);
     const hasRequired = requiredIncludes.length > 0;
+    const walletIncludes = requiredIncludes.filter((s) => this.isWalletAddress(s));
+    const isAirdropWalletReply = walletIncludes.length > 0;
+    const hasUrlIncludes = requiredIncludes.some((s) => String(s).trim().startsWith('http'));
 
-    const requiredBlock = hasRequired
-      ? `
+    let requiredBlock = '';
+    let includeRule = '- No links unless part of mandatory includes';
+
+    if (hasRequired) {
+      const list = requiredIncludes.map((s) => `- ${s}`).join('\n');
+      if (isAirdropWalletReply) {
+        requiredBlock = `
+MANDATORY — this is an airdrop/giveaway reply. Include each wallet below exactly ONCE:
+${list}
+Drop your wallet naturally (e.g. "wallet:", "here's my address", "count me in").
+Put the wallet address on its own line at the end. Short comment (1-2 sentences) only.
+Do NOT add dex links or other URLs — only the wallet address above.
+`;
+        includeRule =
+          '- Include the wallet address exactly once; never paste dex links or duplicate the address';
+      } else if (hasUrlIncludes) {
+        requiredBlock = `
 MANDATORY — include each item below exactly ONCE (never repeat the URL):
-${requiredIncludes.map((s) => `- ${s}`).join('\n')}
-Put the dex link on its own line at the end. Short comment (1-2 sentences) only.
-`
-      : '';
+${list}
+Put the link on its own line at the end. Short comment (1-2 sentences) only.
+`;
+        includeRule = '- Include each mandatory link exactly once; never paste the same URL twice';
+      } else {
+        requiredBlock = `
+MANDATORY — include each item below exactly ONCE:
+${list}
+Short comment (1-2 sentences) only.
+`;
+        includeRule = '- Include each mandatory item exactly once';
+      }
+    }
 
-    const linkRule = hasRequired
-      ? '- Include the dex link exactly once; never paste the same URL twice'
-      : '- No links unless part of mandatory includes';
+    const persona = isAirdropWalletReply
+      ? 'You are a crypto degen joining an airdrop/giveaway on Twitter.'
+      : 'You are a crypto Twitter user.';
 
     return `
-You are a crypto Twitter user. Write a short, natural comment/reply on this tweet.
+${persona} Write a short, natural comment/reply on this tweet.
 
 Tweet from @${tweetAuthor}: "${tweetText}"
 ${context ? `Context: ${context}` : ''}
 ${requiredBlock}
 Rules:
 - 1-2 sentences plus mandatory includes; stay under ${maxLength} characters total
-- Reference crypto/blockchain/DeFi/Solana when relevant to the tweet
-- Add a genuine opinion or question (not generic praise)
-${linkRule}
+- Reference crypto/blockchain/DeFi when relevant to the tweet
+- Add a genuine opinion or short excitement about the airdrop (not generic praise)
+${includeRule}
 - No hashtag spam, no "DM me"
 - Sound like a real person, casual tone
 - Max 1 emoji if it fits
@@ -117,8 +151,11 @@ Return ONLY the reply text.
 
     if (result.length > maxLength) {
       const linkReq = requiredIncludes.find((r) => String(r).startsWith('http'));
-      const tickerReq = requiredIncludes.find((r) => !String(r).startsWith('http'));
-      const footer = [linkReq, tickerReq].filter(Boolean).join('\n');
+      const walletReq = requiredIncludes.find((r) => this.isWalletAddress(r));
+      const otherReq = requiredIncludes.find(
+        (r) => !String(r).startsWith('http') && !this.isWalletAddress(r)
+      );
+      const footer = [linkReq, walletReq, otherReq].filter(Boolean).join('\n');
       const reserved = footer.length + (footer ? 2 : 0);
       if (footer && reserved < maxLength) {
         const mainMax = maxLength - reserved;
