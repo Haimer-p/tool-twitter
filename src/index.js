@@ -124,17 +124,22 @@ async function loadProfilesFromCli() {
 
 function applyRunProfile(accounts, runProfile) {
   const profile = RUN_PROFILES[runProfile] || RUN_PROFILES.vua;
-  return accounts.map((acc) => ({
-    ...acc,
-    delays: {
-      ...acc.delays,
-      ...(profile.delays || {}),
-    },
-    interactions: {
-      ...acc.interactions,
-      ...(profile.interactions || {}),
-    },
-  }));
+  return accounts.map((acc) => {
+    const skipProfileLimits = acc.interactions?.skipProfileLimits === true;
+    return {
+      ...acc,
+      delays: {
+        ...acc.delays,
+        ...(profile.delays || {}),
+      },
+      interactions: skipProfileLimits
+        ? acc.interactions
+        : {
+            ...acc.interactions,
+            ...(profile.interactions || {}),
+          },
+    };
+  });
 }
 
 async function chooseConfigFileFromCli() {
