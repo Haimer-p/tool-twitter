@@ -42,7 +42,7 @@ const COMBO_MAP = {
 
 const COMBO_DELAY = { min: 3000, max: 8000 };
 
-/** maxPerDay / maxPerAccountPerRun >= giá trị này = không giới hạn (vd. 9999 trong config) */
+/** maxPerAccountPerRun >= giá trị này = không giới hạn (vd. 9999 trong config) */
 const UNLIMITED_CAP = 9999;
 
 function isUnlimitedCap(value) {
@@ -948,14 +948,7 @@ class EngagementBot {
 
     logger.info(`Processing account: ${accountName}`);
 
-    const todayCount = await this.db.getTodayInteractionCount(accountName);
-    if (
-      !isUnlimitedCap(interactions.maxPerDay) &&
-      todayCount >= interactions.maxPerDay
-    ) {
-      logger.warn(`${accountName}: daily limit reached (${todayCount})`);
-      return;
-    }
+    // Daily cap disabled by code: bot no longer stops by maxPerDay.
 
     const browserManager = new BrowserManager(this.config);
     await browserManager.launch();
@@ -1005,11 +998,6 @@ class EngagementBot {
             !isUnlimitedCap(interactions.maxPerAccountPerRun) &&
             interactionsThisRun >= interactions.maxPerAccountPerRun
           ) {
-            break;
-          }
-
-          const today = await this.db.getTodayInteractionCount(accountName);
-          if (!isUnlimitedCap(interactions.maxPerDay) && today >= interactions.maxPerDay) {
             break;
           }
 
