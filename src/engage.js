@@ -42,6 +42,14 @@ const COMBO_MAP = {
 
 const COMBO_DELAY = { min: 3000, max: 8000 };
 
+/** maxPerDay / maxPerAccountPerRun >= giá trị này = không giới hạn (vd. 9999 trong config) */
+const UNLIMITED_CAP = 9999;
+
+function isUnlimitedCap(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= UNLIMITED_CAP;
+}
+
 function buildCtx(profile, config) {
   return {
     accountName: profile.name,
@@ -941,7 +949,10 @@ class EngagementBot {
     logger.info(`Processing account: ${accountName}`);
 
     const todayCount = await this.db.getTodayInteractionCount(accountName);
-    if (todayCount >= interactions.maxPerDay) {
+    if (
+      !isUnlimitedCap(interactions.maxPerDay) &&
+      todayCount >= interactions.maxPerDay
+    ) {
       logger.warn(`${accountName}: daily limit reached (${todayCount})`);
       return;
     }
@@ -978,17 +989,29 @@ class EngagementBot {
 
       for (const keyword of selectedKeywords) {
         if (!this.isActive()) break;
-        if (interactionsThisRun >= interactions.maxPerAccountPerRun) break;
+        if (
+          !isUnlimitedCap(interactions.maxPerAccountPerRun) &&
+          interactionsThisRun >= interactions.maxPerAccountPerRun
+        ) {
+          break;
+        }
 
         const tweetUrls = await this.searchTweets(page, keyword, ctx);
         logger.info(`[${accountName}] Found ${tweetUrls.length} tweets for "${keyword}"`);
 
         for (const tweetUrl of tweetUrls.slice(0, tweetsPerKeyword)) {
           if (!this.isActive()) break;
-          if (interactionsThisRun >= interactions.maxPerAccountPerRun) break;
+          if (
+            !isUnlimitedCap(interactions.maxPerAccountPerRun) &&
+            interactionsThisRun >= interactions.maxPerAccountPerRun
+          ) {
+            break;
+          }
 
           const today = await this.db.getTodayInteractionCount(accountName);
-          if (today >= interactions.maxPerDay) break;
+          if (!isUnlimitedCap(interactions.maxPerDay) && today >= interactions.maxPerDay) {
+            break;
+          }
 
           const tweetId = parseTweetId(tweetUrl);
           if (!tweetId) continue;

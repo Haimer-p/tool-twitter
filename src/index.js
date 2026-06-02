@@ -48,15 +48,10 @@ const RUN_PROFILES = {
     },
   },
   vua: {
+    skipLimits: true,
     delays: {
       betweenActions: { min: 40000, max: 90000 },
       betweenSearchRounds: { min: 240000, max: 480000 },
-    },
-    interactions: {
-      maxPerDay: 1200,
-      maxPerAccountPerRun: 1200,
-      keywordsPerRun: 14,
-      tweetsPerKeyword: 14,
     },
   },
   manh: {
@@ -124,8 +119,10 @@ async function loadProfilesFromCli() {
 
 function applyRunProfile(accounts, runProfile) {
   const profile = RUN_PROFILES[runProfile] || RUN_PROFILES.vua;
+  const skipLimitsFromProfile = profile.skipLimits === true;
   return accounts.map((acc) => {
-    const skipProfileLimits = acc.interactions?.skipProfileLimits === true;
+    const skipProfileLimits =
+      skipLimitsFromProfile || acc.interactions?.skipProfileLimits === true;
     return {
       ...acc,
       delays: {
