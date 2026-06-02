@@ -37,8 +37,8 @@ let loginInProgress = false;
 const RUN_PROFILES = {
   yeu: {
     delays: {
-      betweenActions: { min: 90000, max: 180000 },
-      betweenSearchRounds: { min: 600000, max: 900000 },
+      betweenActions: { min: 120000, max: 240000 },
+      betweenSearchRounds: { min: 900000, max: 1500000 },
     },
     interactions: {
       maxPerDay: 300,
@@ -50,14 +50,14 @@ const RUN_PROFILES = {
   vua: {
     skipLimits: true,
     delays: {
-      betweenActions: { min: 40000, max: 90000 },
-      betweenSearchRounds: { min: 240000, max: 480000 },
+      betweenActions: { min: 70000, max: 150000 },
+      betweenSearchRounds: { min: 420000, max: 840000 },
     },
   },
   manh: {
     delays: {
-      betweenActions: { min: 8000, max: 25000 },
-      betweenSearchRounds: { min: 45000, max: 120000 },
+      betweenActions: { min: 25000, max: 70000 },
+      betweenSearchRounds: { min: 180000, max: 420000 },
     },
     interactions: {
       maxPerDay: 5000,
