@@ -37,35 +37,26 @@ let loginInProgress = false;
 let healthCheckInProgress = false;
 
 const RUN_PROFILES = {
+  // Chỉ override delay — giữ nguyên keywords/tweets từ config file (skipLimits).
   yeu: {
+    skipLimits: true,
     delays: {
-      betweenActions: { min: 120000, max: 240000 },
-      betweenSearchRounds: { min: 900000, max: 1500000 },
-    },
-    interactions: {
-      maxPerDay: 300,
-      maxPerAccountPerRun: 300,
-      keywordsPerRun: 8,
-      tweetsPerKeyword: 8,
+      betweenActions: { min: 240000, max: 420000 }, // 4–7 phút
+      betweenSearchRounds: { min: 1500000, max: 2400000 }, // 25–40 phút
     },
   },
   vua: {
     skipLimits: true,
     delays: {
-      betweenActions: { min: 70000, max: 150000 },
-      betweenSearchRounds: { min: 420000, max: 840000 },
+      betweenActions: { min: 150000, max: 300000 }, // 2.5–5 phút
+      betweenSearchRounds: { min: 900000, max: 1500000 }, // 15–25 phút
     },
   },
   manh: {
+    skipLimits: true,
     delays: {
-      betweenActions: { min: 25000, max: 70000 },
-      betweenSearchRounds: { min: 180000, max: 420000 },
-    },
-    interactions: {
-      maxPerDay: 5000,
-      maxPerAccountPerRun: 5000,
-      keywordsPerRun: 25,
-      tweetsPerKeyword: 25,
+      betweenActions: { min: 90000, max: 180000 }, // 1.5–3 phút
+      betweenSearchRounds: { min: 600000, max: 1080000 }, // 10–18 phút
     },
   },
 };

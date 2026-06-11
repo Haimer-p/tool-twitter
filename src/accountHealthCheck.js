@@ -50,36 +50,110 @@ class AccountHealthChecker {
   }
 
   async getProfileInfo(page) {
-    return page
+    await page
+      .waitForSelector(
+        '[data-testid="SideNav_AccountSwitcher_Button"], [data-testid="AppTabBar_Profile_Link"]',
+        { timeout: 8000 }
+      )
+      .catch(() => null);
+
+    const fromSidebar = await page
       .evaluate(() => {
-        const btn = document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]');
-        if (!btn) return null;
+        const reserved = new Set([
+          'home',
+          'explore',
+          'search',
+          'notifications',
+          'messages',
+          'i',
+          'settings',
+        ]);
 
-        const img = btn.querySelector('img');
-        const avatarUrl = img?.src || null;
+        const handleFromHref = (href) => {
+          if (!href || href === '/') return null;
+          const handle = href.replace(/^\//, '').split('/')[0];
+          return handle && !reserved.has(handle) ? handle : null;
+        };
 
-        const spans = btn.querySelectorAll('span');
-        const texts = [...spans]
-          .map((s) => (s.textContent || '').trim())
-          .filter((t) => t && t.length > 0);
-
-        let displayName = texts[0] || null;
+        let displayName = null;
         let username = null;
-        for (const t of texts) {
-          if (t.startsWith('@')) {
-            username = t.replace(/^@/, '');
-            break;
-          }
+        let avatarUrl = null;
+
+        const profileLink = document.querySelector('a[data-testid="AppTabBar_Profile_Link"]');
+        if (profileLink) {
+          username = handleFromHref(profileLink.getAttribute('href'));
+          const img = profileLink.querySelector('img');
+          avatarUrl = img?.src || avatarUrl;
         }
 
-        if (!username && texts.length > 1) {
-          const second = texts[1];
-          if (second.startsWith('@')) username = second.slice(1);
+        const btn = document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]');
+        if (btn) {
+          const img = btn.querySelector('img');
+          avatarUrl = img?.src || avatarUrl;
+
+          const texts = [...btn.querySelectorAll('span')]
+            .map((s) => (s.textContent || '').trim())
+            .filter((t) => t.length > 0);
+
+          for (const t of texts) {
+            if (t.startsWith('@')) {
+              username = t.slice(1);
+            } else if (!displayName && !t.startsWith('@')) {
+              displayName = t;
+            }
+          }
         }
 
         return { displayName, username, avatarUrl };
       })
       .catch(() => null);
+
+    if (fromSidebar?.username) return fromSidebar;
+
+    const profileHref = await page
+      .$eval('a[data-testid="AppTabBar_Profile_Link"]', (el) => el.getAttribute('href'))
+      .catch(() => null);
+
+    if (!profileHref) return fromSidebar;
+
+    try {
+      await page.goto(`${this.config.baseUrl || 'https://x.com'}${profileHref}`, {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      });
+      await sleep(2000);
+
+      const fromProfile = await page.evaluate(() => {
+        const userName = document.querySelector('[data-testid="UserName"]');
+        if (!userName) return null;
+
+        const texts = [...userName.querySelectorAll('span')]
+          .map((s) => (s.textContent || '').trim())
+          .filter(Boolean);
+
+        let displayName = null;
+        let username = null;
+        for (const t of texts) {
+          if (t.startsWith('@')) username = t.slice(1);
+          else if (!displayName) displayName = t;
+        }
+
+        const avatar = document.querySelector('a[href$="/photo"] img, img[src*="profile_images"]');
+        return { displayName, username, avatarUrl: avatar?.src || null };
+      });
+
+      if (fromProfile?.username) {
+        return {
+          displayName: fromProfile.displayName || fromSidebar?.displayName,
+          username: fromProfile.username,
+          avatarUrl: fromProfile.avatarUrl || fromSidebar?.avatarUrl,
+        };
+      }
+    } catch {
+      // fall through
+    }
+
+    return fromSidebar;
   }
 
   async captureScreenshot(page, accountName) {

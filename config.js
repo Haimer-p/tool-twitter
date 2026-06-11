@@ -11,8 +11,8 @@ module.exports = {
   },
 
   interactions: {
-    maxPerDay: 50,
-    maxPerAccountPerRun: 15,
+    maxPerDay: 9999,
+    maxPerAccountPerRun: 9999,
     keywordsPerRun: 6,
     tweetsPerKeyword: 8,
     followBackWaitDays: 3,
