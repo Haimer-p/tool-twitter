@@ -196,7 +196,11 @@ class EngagementBot {
         const restrictedHint =
           bodyText.includes('who can reply') ||
           bodyText.includes("can't reply") ||
-          bodyText.includes('replying is limited');
+          bodyText.includes('replying is limited') ||
+          bodyText.includes('only some accounts can reply') ||
+          bodyText.includes('only people you follow can reply') ||
+          bodyText.includes('only accounts you follow can reply') ||
+          bodyText.includes('only people mentioned can reply');
         return {
           hasBox: !!box,
           textLen,
@@ -239,7 +243,11 @@ class EngagementBot {
         if (
           text.includes("can't reply") ||
           text.includes('replying is limited') ||
-          text.includes('who can reply')
+          text.includes('who can reply') ||
+          text.includes('only some accounts can reply') ||
+          text.includes('only people you follow can reply') ||
+          text.includes('only accounts you follow can reply') ||
+          text.includes('only people mentioned can reply')
         ) {
           return { canReply: false, reason: 'restricted' };
         }
@@ -343,7 +351,12 @@ class EngagementBot {
     }
   }
 
-  async recordInteraction(data) {
+  async recordInteraction(data, ctx) {
+    if (ctx?.healthCheck) {
+      logger.info(`[${data.accountName}] Health check ${data.interactionType} OK`);
+      return true;
+    }
+
     const saved = await this.db.saveInteractedTweet(data);
     if (!saved) return false;
 
@@ -369,15 +382,18 @@ class EngagementBot {
       await likeButton.click();
       logger.info(`[${ctx.accountName}] Liked: ${meta.tweetUrl}`);
 
-      return await this.recordInteraction({
-        tweetId: meta.tweetId,
-        tweetUrl: meta.tweetUrl,
-        authorUsername: meta.author,
-        content: meta.content,
-        interactionType: 'like',
-        accountName: ctx.accountName,
-        keywordUsed: meta.keyword,
-      });
+      return await this.recordInteraction(
+        {
+          tweetId: meta.tweetId,
+          tweetUrl: meta.tweetUrl,
+          authorUsername: meta.author,
+          content: meta.content,
+          interactionType: 'like',
+          accountName: ctx.accountName,
+          keywordUsed: meta.keyword,
+        },
+        ctx
+      );
     } catch (error) {
       logger.error(`[${ctx.accountName}] Like error: ${error.message}`);
       return false;
@@ -404,15 +420,18 @@ class EngagementBot {
       await this.randomDelay(1500, 2500);
       logger.info(`[${ctx.accountName}] Retweeted: ${meta.tweetUrl}`);
 
-      return await this.recordInteraction({
-        tweetId: meta.tweetId,
-        tweetUrl: meta.tweetUrl,
-        authorUsername: meta.author,
-        content: meta.content,
-        interactionType: 'retweet',
-        accountName: ctx.accountName,
-        keywordUsed: meta.keyword,
-      });
+      return await this.recordInteraction(
+        {
+          tweetId: meta.tweetId,
+          tweetUrl: meta.tweetUrl,
+          authorUsername: meta.author,
+          content: meta.content,
+          interactionType: 'retweet',
+          accountName: ctx.accountName,
+          keywordUsed: meta.keyword,
+        },
+        ctx
+      );
     } catch (error) {
       logger.error(`[${ctx.accountName}] Retweet error: ${error.message}`);
       return false;
@@ -628,7 +647,8 @@ class EngagementBot {
             await sleep(2000);
           }
 
-          logger.info(`[${ctx.accountName}] AI reply: "${text.substring(0, 80)}..."`);
+          const replyLabel = ctx.healthCheck ? 'Health check reply' : 'AI reply';
+          logger.info(`[${ctx.accountName}] ${replyLabel}: "${text.substring(0, 80)}..."`);
 
           if (!(await this.openReplyComposer(page, ctx))) {
             lastError = new Error('Reply button not found');
@@ -648,16 +668,19 @@ class EngagementBot {
 
           logger.info(`[${ctx.accountName}] Replied: ${meta.tweetUrl.substring(0, 60)}...`);
 
-          return await this.recordInteraction({
-            tweetId: meta.tweetId,
-            tweetUrl: meta.tweetUrl,
-            authorUsername: meta.author,
-            content: meta.content,
-            interactionType: 'reply',
-            accountName: ctx.accountName,
-            keywordUsed: meta.keyword,
-            aiGeneratedReply: text,
-          });
+          return await this.recordInteraction(
+            {
+              tweetId: meta.tweetId,
+              tweetUrl: meta.tweetUrl,
+              authorUsername: meta.author,
+              content: meta.content,
+              interactionType: 'reply',
+              accountName: ctx.accountName,
+              keywordUsed: meta.keyword,
+              aiGeneratedReply: text,
+            },
+            ctx
+          );
         } catch (error) {
           lastError = error;
           logger.error(
@@ -810,15 +833,18 @@ class EngagementBot {
         accountName: ctx.accountName,
       });
 
-      return await this.recordInteraction({
-        tweetId: meta.tweetId,
-        tweetUrl: meta.tweetUrl,
-        authorUsername: username,
-        content: meta.content,
-        interactionType: 'follow',
-        accountName: ctx.accountName,
-        keywordUsed: meta.keyword,
-      });
+      return await this.recordInteraction(
+        {
+          tweetId: meta.tweetId,
+          tweetUrl: meta.tweetUrl,
+          authorUsername: username,
+          content: meta.content,
+          interactionType: 'follow',
+          accountName: ctx.accountName,
+          keywordUsed: meta.keyword,
+        },
+        ctx
+      );
     } catch (error) {
       logger.error(`[${ctx.accountName}] Follow error: ${error.message}`);
       return false;

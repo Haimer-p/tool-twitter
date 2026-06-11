@@ -60,7 +60,7 @@ const activityLogSchema = new mongoose.Schema({
   accountName: { type: String, required: true },
   action: {
     type: String,
-    enum: ['like', 'retweet', 'reply', 'follow', 'unfollow', 'login', 'error', 'reply_failed'],
+    enum: ['like', 'retweet', 'reply', 'follow', 'unfollow', 'login', 'error', 'reply_failed', 'health_check'],
     required: true,
   },
   target: { type: String },

@@ -71,6 +71,29 @@
     .refresh-time { font-size: 12px; color: #999; text-align: center; margin-top: 10px; }
     .auth-box { margin-top: 10px; }
     .auth-box input { padding: 8px; margin-right: 8px; border: 1px solid #ddd; border-radius: 6px; }
+    .health-section { background: white; border-radius: 15px; padding: 20px; margin-bottom: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); }
+    .health-section h3 { margin-bottom: 16px; color: #333; }
+    .health-summary { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+    .health-pill { padding: 8px 16px; border-radius: 20px; font-size: 14px; font-weight: 600; background: #f4f4f4; }
+    .health-pill.alive { background: #d5f5e3; color: #1e8449; }
+    .health-pill.partial { background: #fdebd0; color: #b7950b; }
+    .health-pill.dead { background: #fadbd8; color: #c0392b; }
+    .health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+    .health-card { border: 1px solid #eee; border-radius: 12px; padding: 14px; background: #fafafa; }
+    .health-card-header { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
+    .health-avatar { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; background: #ddd; }
+    .health-name { font-weight: 700; color: #333; }
+    .health-handle { color: #666; font-size: 13px; }
+    .health-cookie { color: #999; font-size: 12px; }
+    .health-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .health-badge { font-size: 12px; padding: 4px 8px; border-radius: 6px; background: #eee; }
+    .health-badge.ok { background: #d5f5e3; color: #1e8449; }
+    .health-badge.fail { background: #fadbd8; color: #c0392b; }
+    .health-badge.pending { background: #ebf5fb; color: #2874a6; }
+    .health-shot { width: 100%; border-radius: 8px; border: 1px solid #ddd; cursor: pointer; max-height: 140px; object-fit: cover; object-position: top; }
+    .health-meta { font-size: 11px; color: #999; margin-top: 8px; }
+    .btn-health { background: #8e44ad; color: white; }
+    .health-status-text { font-size: 14px; color: #666; align-self: center; }
   </style>
 </head>
 <body>
@@ -95,6 +118,18 @@
       <div class="stat-card"><div class="icon">🔄</div><div class="value" id="totalRetweets">0</div><div class="label">Retweets</div></div>
       <div class="stat-card"><div class="icon">💬</div><div class="value" id="totalReplies">0</div><div class="label">Replies</div></div>
       <div class="stat-card"><div class="icon">➕</div><div class="value" id="totalFollows">0</div><div class="label">Follows</div></div>
+    </div>
+
+    <div class="health-section">
+      <h3>Kiểm tra tài khoản (Health Check)</h3>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+        <button class="btn btn-health" id="healthCheckBtn" onclick="runHealthCheck()">Chạy health check</button>
+        <span class="health-status-text" id="healthStatusText">Chưa chạy</span>
+      </div>
+      <div class="health-summary" id="healthSummary"></div>
+      <div class="health-grid" id="healthGrid">
+        <div style="color:#999;padding:12px">Bấm "Chạy health check" để kiểm tra login, search, like, retweet, reply cho tất cả account.</div>
+      </div>
     </div>
 
     <div class="chart-container">
@@ -161,7 +196,144 @@
     }
 
     function getActionIcon(action) {
-      return { like: '❤️', retweet: '🔄', reply: '💬', follow: '➕', unfollow: '➖', login: '🔐', error: '⚠️' }[action] || '📝';
+      return { like: '❤️', retweet: '🔄', reply: '💬', follow: '➕', unfollow: '➖', login: '🔐', error: '⚠️', health_check: '🩺' }[action] || '📝';
+    }
+
+    function badgeHtml(label, check) {
+      if (!check) return `<span class="health-badge pending">${label}: —</span>`;
+      const cls = check.ok ? 'ok' : 'fail';
+      const icon = check.ok ? '✅' : '❌';
+      const tip = check.error || check.note || '';
+      const title = tip ? ` title="${tip.replace(/"/g, '&quot;')}"` : '';
+      return `<span class="health-badge ${cls}"${title}>${label} ${icon}</span>`;
+    }
+
+    function screenshotUrl(accountName, bust) {
+      const q = bust ? `?t=${bust}` : '';
+      return `/api/health/screenshots/${encodeURIComponent(accountName)}${q}`;
+    }
+
+    function renderHealthState(state) {
+      const results = state?.results || [];
+      const running = state?.running;
+      const statusEl = document.getElementById('healthStatusText');
+      const btn = document.getElementById('healthCheckBtn');
+      const summary = document.getElementById('healthSummary');
+      const grid = document.getElementById('healthGrid');
+
+      if (running) {
+        statusEl.textContent = 'Đang chạy...';
+        btn.disabled = true;
+      } else if (state?.completedAt) {
+        statusEl.textContent = 'Hoàn tất: ' + formatTime(state.completedAt);
+        btn.disabled = false;
+      } else {
+        statusEl.textContent = 'Chưa chạy';
+        btn.disabled = false;
+      }
+
+      const alive = results.filter((r) => r.status === 'alive').length;
+      const partial = results.filter((r) => r.status === 'partial').length;
+      const dead = results.filter((r) => r.status === 'dead').length;
+
+      if (results.length) {
+        summary.innerHTML = `
+          <span class="health-pill alive">Sống: ${alive}</span>
+          <span class="health-pill partial">Một phần: ${partial}</span>
+          <span class="health-pill dead">Chết: ${dead}</span>
+        `;
+      } else {
+        summary.innerHTML = '';
+      }
+
+      if (!results.length && !running) {
+        grid.innerHTML = '<div style="color:#999;padding:12px">Bấm "Chạy health check" để kiểm tra tất cả account trong thư mục accounts/.</div>';
+        return;
+      }
+
+      grid.innerHTML = results.map((r) => {
+        const p = r.profile || {};
+        const name = p.displayName || r.accountName;
+        const handle = p.username ? '@' + p.username : '';
+        const avatar = p.avatarUrl || '';
+        const bust = Date.now();
+        const shot = r.screenshotUrl
+          ? `<img class="health-shot" data-account="${r.accountName}" alt="screenshot" onclick="openHealthScreenshot('${r.accountName}')">`
+          : '';
+        const statusColor = r.status === 'alive' ? '#1e8449' : r.status === 'partial' ? '#b7950b' : '#c0392b';
+        return `
+          <div class="health-card">
+            <div class="health-card-header">
+              ${avatar ? `<img class="health-avatar" src="${avatar}" alt="">` : '<div class="health-avatar"></div>'}
+              <div>
+                <div class="health-name">${name}</div>
+                <div class="health-handle">${handle}</div>
+                <div class="health-cookie">Cookie: ${r.accountName}</div>
+              </div>
+              <div style="margin-left:auto;font-weight:700;color:${statusColor}">${r.status || '?'}</div>
+            </div>
+            <div class="health-badges">
+              ${badgeHtml('Login', r.checks?.login)}
+              ${badgeHtml('Search', r.checks?.search)}
+              ${badgeHtml('Like', r.checks?.like)}
+              ${badgeHtml('RT', r.checks?.retweet)}
+              ${badgeHtml('Reply', r.checks?.reply)}
+            </div>
+            ${shot}
+            <div class="health-meta">${formatTime(r.testedAt)} · ${Math.round((r.durationMs || 0) / 1000)}s</div>
+          </div>
+        `;
+      }).join('');
+
+      attachHealthScreenshots();
+    }
+
+    async function attachHealthScreenshots() {
+      const imgs = document.querySelectorAll('.health-shot[data-account]');
+      for (const img of imgs) {
+        const name = img.getAttribute('data-account');
+        if (!name) continue;
+        try {
+          const res = await fetch(screenshotUrl(name), { headers: { Authorization: getAuthHeader() } });
+          if (res.ok) img.src = URL.createObjectURL(await res.blob());
+        } catch {
+          img.style.display = 'none';
+        }
+      }
+    }
+
+    async function openHealthScreenshot(accountName) {
+      try {
+        const res = await fetch(screenshotUrl(accountName), { headers: { Authorization: getAuthHeader() } });
+        if (!res.ok) return;
+        window.open(URL.createObjectURL(await res.blob()), '_blank');
+      } catch {
+        /* ignore */
+      }
+    }
+
+    async function loadHealthResults() {
+      try {
+        const state = await apiFetch('/api/health/results');
+        renderHealthState(state);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    async function runHealthCheck() {
+      try {
+        document.getElementById('healthStatusText').textContent = 'Đang khởi động...';
+        document.getElementById('healthCheckBtn').disabled = true;
+        await fetch('/api/control/health-check', {
+          method: 'POST',
+          headers: { Authorization: getAuthHeader(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+      } catch (e) {
+        alert('Không gửi được lệnh health check: ' + e.message);
+        document.getElementById('healthCheckBtn').disabled = false;
+      }
     }
 
     function formatTime(timestamp) {
@@ -272,6 +444,12 @@
       if (socket) socket.disconnect();
       socket = io();
       socket.on('stats-update', updateDashboard);
+      socket.on('health-check-update', (payload) => {
+        if (payload?.state) renderHealthState(payload.state);
+      });
+      socket.on('health-check-complete', (payload) => {
+        if (payload?.state) renderHealthState(payload.state);
+      });
     }
 
     async function initialFetch() {
@@ -281,6 +459,7 @@
         const status = await apiFetch('/api/status');
         await loadConfigSelectors();
         await loadAccountOptions();
+        await loadHealthResults();
         document.getElementById('runProfileSelect').value = status.runProfile || 'vua';
         updateDashboard({ stats: stats.totals, chartData: stats.stats, recentActivities: activities, timestamp: new Date() });
       } catch (e) {

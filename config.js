@@ -82,6 +82,16 @@ module.exports = {
     password: process.env.DASHBOARD_PASSWORD || 'admin123',
   },
 
+  healthCheck: {
+    keyword: process.env.HEALTH_CHECK_KEYWORD || 'crypto',
+    replyText: process.env.HEALTH_CHECK_REPLY_TEXT || 'Health check test',
+    delays: {
+      betweenSteps: { min: 2000, max: 4000 },
+      scroll: { min: 1000, max: 2000 },
+      pageLoad: { min: 2000, max: 4000 },
+    },
+  },
+
   keywords: [
     'crypto',
     'bitcoin',

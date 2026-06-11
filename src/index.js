@@ -13,6 +13,7 @@ const AIService = require('./ai');
 const Database = require('./database');
 const EngagementBot = require('./engage');
 const Dashboard = require('./dashboard');
+const { AccountHealthChecker, listCookieAccounts } = require('./accountHealthCheck');
 const {
   loadAccountConfig,
   filterAccountsByName,
@@ -33,6 +34,7 @@ let runtimeState = {
   runProfile: 'vua',
 };
 let loginInProgress = false;
+let healthCheckInProgress = false;
 
 const RUN_PROFILES = {
   yeu: {
@@ -284,6 +286,90 @@ function handleControl(action, data) {
       } finally {
         await browserManager.close().catch(() => null);
         loginInProgress = false;
+      }
+    })();
+  }
+
+  if (action === 'health_check') {
+    if (healthCheckInProgress) {
+      logger.warn('Health check ignored: already in progress');
+      return;
+    }
+    if (loginInProgress) {
+      logger.warn('Health check ignored: login in progress');
+      return;
+    }
+    if (botRunning) {
+      logger.warn('Health check ignored: bot is running');
+      return;
+    }
+
+    healthCheckInProgress = true;
+    const accountsDir = path.join(process.cwd(), 'accounts');
+
+    (async () => {
+      try {
+        let accountNames = Array.isArray(data?.accountNames)
+          ? data.accountNames.map((n) => String(n).trim()).filter(Boolean)
+          : [];
+        if (!accountNames.length) {
+          accountNames = await listCookieAccounts(accountsDir);
+        }
+        if (!accountNames.length) {
+          logger.warn('Health check ignored: no accounts found');
+          return;
+        }
+
+        if (dashboard) {
+          dashboard.healthCheckState = {
+            running: true,
+            results: [],
+            startedAt: new Date().toISOString(),
+            completedAt: null,
+          };
+          dashboard.emitHealthCheckUpdate({ type: 'start', accountNames });
+        }
+
+        logger.info(`Health check started for ${accountNames.length} account(s)`);
+
+        const checker = new AccountHealthChecker(config, database, {
+          accountsDir,
+          onProgress: (payload) => {
+            if (!dashboard) return;
+            if (payload.results) {
+              dashboard.healthCheckState.results = payload.results;
+            }
+            dashboard.emitHealthCheckUpdate(payload);
+          },
+        });
+
+        const results = await checker.runAll(accountNames);
+
+        if (dashboard) {
+          dashboard.healthCheckState = {
+            running: false,
+            results,
+            startedAt: dashboard.healthCheckState.startedAt,
+            completedAt: new Date().toISOString(),
+          };
+          dashboard.emitHealthCheckComplete();
+        }
+
+        const alive = results.filter((r) => r.status === 'alive').length;
+        const dead = results.filter((r) => r.status === 'dead').length;
+        const partial = results.filter((r) => r.status === 'partial').length;
+        logger.info(
+          `Health check done: alive=${alive}, partial=${partial}, dead=${dead}`
+        );
+      } catch (error) {
+        logger.error(`Health check error: ${error.message}`);
+        if (dashboard) {
+          dashboard.healthCheckState.running = false;
+          dashboard.healthCheckState.completedAt = new Date().toISOString();
+          dashboard.emitHealthCheckComplete();
+        }
+      } finally {
+        healthCheckInProgress = false;
       }
     })();
   }

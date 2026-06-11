@@ -72,14 +72,25 @@ class AuthManager {
     return false;
   }
 
+  async gotoWithTimeout(page, url, timeoutMs = 90000) {
+    const prev = page.getDefaultNavigationTimeout();
+    page.setDefaultNavigationTimeout(timeoutMs);
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    } finally {
+      page.setDefaultNavigationTimeout(prev);
+    }
+  }
+
   async login(page, accountName, options = {}) {
-    const mode = options.mode || 'terminal'; // terminal | dashboard
+    const mode = options.mode || 'terminal'; // terminal | dashboard | health_check
     const manualTimeoutMs = options.manualTimeoutMs || 300000;
+    const navTimeoutMs = options.navigationTimeoutMs || 90000;
     const cookies = await this.loadCookies(accountName);
 
     if (cookies && cookies.length > 0) {
       await page.setCookie(...cookies);
-      await page.goto(`${this.baseUrl}/home`, { waitUntil: 'domcontentloaded' });
+      await this.gotoWithTimeout(page, `${this.baseUrl}/home`, navTimeoutMs);
       await sleep(3000);
 
       const loggedIn = await this.isLoggedInOnPage(page);
@@ -89,19 +100,21 @@ class AuthManager {
         return true;
       }
       logger.warn(`${accountName}: cookies expired, manual login required`);
+      if (mode === 'health_check') return false;
+    } else if (mode === 'health_check') {
+      logger.warn(`${accountName}: no cookie file`);
+      return false;
     }
 
     logger.info(`${accountName}: please log in manually in the browser`);
-    await page.goto(`${this.baseUrl}/login`, { waitUntil: 'domcontentloaded' });
-    if (mode === 'dashboard') {
-      logger.info(`${accountName}: waiting for dashboard login completion (${manualTimeoutMs}ms)`);
-      const done = await this.waitForManualLogin(page, manualTimeoutMs);
-      if (!done) {
-        logger.warn(`${accountName}: manual login timeout from dashboard`);
-        return false;
-      }
-    } else {
-      await this.askEnter('Press Enter after login is complete: ');
+    await this.gotoWithTimeout(page, `${this.baseUrl}/login`, navTimeoutMs);
+    logger.info(
+      `${accountName}: waiting for manual login (${Math.round(manualTimeoutMs / 1000)}s) — no need to press Enter`
+    );
+    const done = await this.waitForManualLogin(page, manualTimeoutMs);
+    if (!done) {
+      logger.warn(`${accountName}: manual login timeout (${mode})`);
+      return false;
     }
 
     const newCookies = await page.cookies();

@@ -4,6 +4,7 @@ const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs').promises;
 const { CONFIG_PATH, CONFIGS_DIR, listConfigFiles, resolveConfigPath } = require('./accountConfig');
+const { SCREENSHOT_DIR } = require('./accountHealthCheck');
 const logger = require('./logger');
 
 class Dashboard {
@@ -20,6 +21,27 @@ class Dashboard {
       configFile: 'accounts.config.json',
       runProfile: 'vua',
     };
+    this.healthCheckState = {
+      running: false,
+      results: [],
+      startedAt: null,
+      completedAt: null,
+    };
+  }
+
+  emitHealthCheckUpdate(payload) {
+    this.io.emit('health-check-update', {
+      ...payload,
+      state: this.healthCheckState,
+      timestamp: new Date(),
+    });
+  }
+
+  emitHealthCheckComplete() {
+    this.io.emit('health-check-complete', {
+      state: this.healthCheckState,
+      timestamp: new Date(),
+    });
   }
 
   authMiddleware() {
@@ -113,9 +135,28 @@ class Dashboard {
     this.app.get('/api/status', auth, (req, res) => {
       res.json({
         running: req.app.locals.botRunning || false,
+        healthCheckRunning: this.healthCheckState?.running || false,
         activeConfigFile: this.botState?.configFile || 'accounts.config.json',
         runProfile: this.botState?.runProfile || 'vua',
       });
+    });
+
+    this.app.get('/api/health/results', auth, (req, res) => {
+      res.json(this.healthCheckState);
+    });
+
+    this.app.get('/api/health/screenshots/:accountName', auth, async (req, res) => {
+      const accountName = String(req.params.accountName || '').replace(/[^a-zA-Z0-9_-]/g, '');
+      if (!accountName) {
+        return res.status(400).json({ error: 'Invalid account name' });
+      }
+      const filePath = path.join(SCREENSHOT_DIR, `${accountName}.png`);
+      try {
+        await fs.access(filePath);
+        res.sendFile(filePath);
+      } catch {
+        res.status(404).json({ error: 'Screenshot not found' });
+      }
     });
 
     this.app.post('/api/control/start', auth, (req, res) => {
@@ -134,6 +175,12 @@ class Dashboard {
       this.io.emit('control', { action: 'login_account', data: req.body });
       this.onControl('login_account', req.body);
       res.json({ success: true, message: 'Login command sent' });
+    });
+
+    this.app.post('/api/control/health-check', auth, (req, res) => {
+      this.io.emit('control', { action: 'health_check', data: req.body });
+      this.onControl('health_check', req.body);
+      res.json({ success: true, message: 'Health check started' });
     });
 
     this.app.get('/', auth, (req, res) => {
