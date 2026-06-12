@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs').promises;
 const { CONFIG_PATH, CONFIGS_DIR, listConfigFiles, resolveConfigPath } = require('./accountConfig');
 const { SCREENSHOT_DIR } = require('./accountHealthCheck');
+const { SCREENSHOT_DIR: APPEAL_SCREENSHOT_DIR } = require('./accountAppeal');
 const logger = require('./logger');
 
 class Dashboard {
@@ -27,6 +28,39 @@ class Dashboard {
       startedAt: null,
       completedAt: null,
     };
+    this.appealState = {
+      running: false,
+      waitingCaptcha: false,
+      currentAccount: null,
+      results: [],
+      startedAt: null,
+      completedAt: null,
+    };
+  }
+
+  emitAppealUpdate(payload) {
+    this.io.emit('appeal-update', {
+      ...payload,
+      state: this.appealState,
+      timestamp: new Date(),
+    });
+  }
+
+  emitAppealComplete() {
+    this.io.emit('appeal-complete', {
+      state: this.appealState,
+      timestamp: new Date(),
+    });
+  }
+
+  emitAppealWaitingCaptcha(payload) {
+    this.appealState.waitingCaptcha = !!payload?.waiting;
+    this.appealState.currentAccount = payload?.accountName || this.appealState.currentAccount;
+    this.io.emit('appeal-waiting-captcha', {
+      ...payload,
+      state: this.appealState,
+      timestamp: new Date(),
+    });
   }
 
   emitHealthCheckUpdate(payload) {
@@ -40,6 +74,27 @@ class Dashboard {
   emitHealthCheckComplete() {
     this.io.emit('health-check-complete', {
       state: this.healthCheckState,
+      timestamp: new Date(),
+    });
+  }
+
+  getBotStatusPayload(app) {
+    const running = app?.locals?.botRunning || false;
+    const stopping = app?.locals?.botStopping || false;
+    return {
+      running,
+      stopping,
+      healthCheckRunning: this.healthCheckState?.running || false,
+      appealRunning: this.appealState?.running || false,
+      appealWaitingCaptcha: this.appealState?.waitingCaptcha || false,
+      activeConfigFile: this.botState?.configFile || 'accounts.config.json',
+      runProfile: this.botState?.runProfile || 'vua',
+    };
+  }
+
+  emitBotStatus() {
+    this.io.emit('bot-status-update', {
+      ...this.getBotStatusPayload(this.app),
       timestamp: new Date(),
     });
   }
@@ -133,12 +188,7 @@ class Dashboard {
     });
 
     this.app.get('/api/status', auth, (req, res) => {
-      res.json({
-        running: req.app.locals.botRunning || false,
-        healthCheckRunning: this.healthCheckState?.running || false,
-        activeConfigFile: this.botState?.configFile || 'accounts.config.json',
-        runProfile: this.botState?.runProfile || 'vua',
-      });
+      res.json(this.getBotStatusPayload(req.app));
     });
 
     this.app.get('/api/health/results', auth, (req, res) => {
@@ -181,6 +231,36 @@ class Dashboard {
       this.io.emit('control', { action: 'health_check', data: req.body });
       this.onControl('health_check', req.body);
       res.json({ success: true, message: 'Health check started' });
+    });
+
+    this.app.get('/api/appeal/results', auth, (req, res) => {
+      res.json(this.appealState);
+    });
+
+    this.app.get('/api/appeal/screenshots/:accountName', auth, async (req, res) => {
+      const accountName = String(req.params.accountName || '').replace(/[^a-zA-Z0-9_-]/g, '');
+      if (!accountName) {
+        return res.status(400).json({ error: 'Invalid account name' });
+      }
+      const filePath = path.join(APPEAL_SCREENSHOT_DIR, `${accountName}.png`);
+      try {
+        await fs.access(filePath);
+        res.sendFile(filePath);
+      } catch {
+        res.status(404).json({ error: 'Screenshot not found' });
+      }
+    });
+
+    this.app.post('/api/control/account-appeal', auth, (req, res) => {
+      this.io.emit('control', { action: 'account_appeal', data: req.body });
+      this.onControl('account_appeal', req.body);
+      res.json({ success: true, message: 'Appeal started' });
+    });
+
+    this.app.post('/api/control/appeal-captcha-done', auth, (req, res) => {
+      this.io.emit('control', { action: 'appeal_captcha_done', data: req.body });
+      this.onControl('appeal_captcha_done', req.body);
+      res.json({ success: true, message: 'Captcha done signal sent' });
     });
 
     this.app.get('/', auth, (req, res) => {

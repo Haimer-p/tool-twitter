@@ -14,6 +14,7 @@ const Database = require('./database');
 const EngagementBot = require('./engage');
 const Dashboard = require('./dashboard');
 const { AccountHealthChecker, listCookieAccounts } = require('./accountHealthCheck');
+const { AccountAppealRunner } = require('./accountAppeal');
 const {
   loadAccountConfig,
   filterAccountsByName,
@@ -35,6 +36,8 @@ let runtimeState = {
 };
 let loginInProgress = false;
 let healthCheckInProgress = false;
+let appealInProgress = false;
+let appealCaptchaWaiter = null;
 
 const RUN_PROFILES = {
   // Chỉ override delay — giữ nguyên keywords/tweets từ config file (skipLimits).
@@ -182,7 +185,11 @@ async function runBot(profiles, maxConcurrent) {
   if (!bot || botRunning) return;
   botRunning = true;
   bot.isRunning = true;
-  if (dashboard?.app) dashboard.app.locals.botRunning = true;
+  if (dashboard?.app) {
+    dashboard.app.locals.botRunning = true;
+    dashboard.app.locals.botStopping = false;
+    dashboard.emitBotStatus();
+  }
 
   logger.info(`Bot started at ${new Date().toLocaleString()}`);
   try {
@@ -192,9 +199,15 @@ async function runBot(profiles, maxConcurrent) {
   } finally {
     botRunning = false;
     bot.isRunning = false;
-    if (dashboard?.app) dashboard.app.locals.botRunning = false;
+    if (dashboard?.app) {
+      dashboard.app.locals.botRunning = false;
+      dashboard.app.locals.botStopping = false;
+    }
     logger.info(`Bot finished at ${new Date().toLocaleString()}`);
-    if (dashboard) await dashboard.sendStatsUpdate();
+    if (dashboard) {
+      dashboard.emitBotStatus();
+      await dashboard.sendStatsUpdate();
+    }
   }
 }
 
@@ -202,8 +215,16 @@ function handleControl(action, data) {
   if (!bot) return;
 
   if (action === 'stop') {
+    if (!botRunning) {
+      logger.warn('Stop ignored: bot is not running');
+      return;
+    }
     bot.isRunning = false;
-    logger.info('Stop signal received');
+    if (dashboard?.app) {
+      dashboard.app.locals.botStopping = true;
+      dashboard.emitBotStatus();
+    }
+    logger.info('Stop signal received — finishing current actions...');
     return;
   }
 
@@ -349,8 +370,9 @@ function handleControl(action, data) {
         const alive = results.filter((r) => r.status === 'alive').length;
         const dead = results.filter((r) => r.status === 'dead').length;
         const partial = results.filter((r) => r.status === 'partial').length;
+        const suspended = results.filter((r) => r.status === 'suspended').length;
         logger.info(
-          `Health check done: alive=${alive}, partial=${partial}, dead=${dead}`
+          `Health check done: alive=${alive}, partial=${partial}, suspended=${suspended}, dead=${dead}`
         );
       } catch (error) {
         logger.error(`Health check error: ${error.message}`);
@@ -361,6 +383,128 @@ function handleControl(action, data) {
         }
       } finally {
         healthCheckInProgress = false;
+      }
+    })();
+  }
+
+  if (action === 'appeal_captcha_done') {
+    if (appealCaptchaWaiter) {
+      appealCaptchaWaiter(true);
+      appealCaptchaWaiter = null;
+      logger.info('Appeal captcha done signal received');
+    } else {
+      logger.warn('Appeal captcha done ignored: not waiting');
+    }
+    return;
+  }
+
+  if (action === 'account_appeal') {
+    if (appealInProgress) {
+      logger.warn('Appeal ignored: already in progress');
+      return;
+    }
+    if (healthCheckInProgress) {
+      logger.warn('Appeal ignored: health check in progress');
+      return;
+    }
+    if (loginInProgress) {
+      logger.warn('Appeal ignored: login in progress');
+      return;
+    }
+    if (botRunning) {
+      logger.warn('Appeal ignored: bot is running');
+      return;
+    }
+
+    appealInProgress = true;
+    const accountsDir = path.join(process.cwd(), 'accounts');
+
+    (async () => {
+      try {
+        let accountNames = Array.isArray(data?.accountNames)
+          ? data.accountNames.map((n) => String(n).trim()).filter(Boolean)
+          : [];
+
+        if (!accountNames.length && dashboard?.healthCheckState?.results?.length) {
+          accountNames = dashboard.healthCheckState.results
+            .filter((r) => r.status === 'suspended')
+            .map((r) => r.accountName);
+        }
+
+        if (!accountNames.length) {
+          logger.warn('Appeal ignored: no suspended accounts found — run health check or select accounts');
+          return;
+        }
+
+        const force = !!data?.force || (Array.isArray(data?.accountNames) && data.accountNames.length > 0);
+
+        if (dashboard) {
+          dashboard.appealState = {
+            running: true,
+            waitingCaptcha: false,
+            currentAccount: null,
+            results: [],
+            startedAt: new Date().toISOString(),
+            completedAt: null,
+          };
+          dashboard.emitAppealUpdate({ type: 'start', accountNames });
+        }
+
+        logger.info(`Appeal started for ${accountNames.length} account(s): ${accountNames.join(', ')}`);
+
+        const runner = new AccountAppealRunner(config, {
+          accountsDir,
+          mode: 'dashboard',
+          force,
+          onProgress: (payload) => {
+            if (!dashboard) return;
+            if (payload.results) {
+              dashboard.appealState.results = payload.results;
+            }
+            if (payload.accountName && payload.type === 'account_start') {
+              dashboard.appealState.currentAccount = payload.accountName;
+            }
+            dashboard.emitAppealUpdate(payload);
+          },
+          onWaitingCaptcha: (payload) => {
+            if (!dashboard) return;
+            dashboard.emitAppealWaitingCaptcha(payload);
+          },
+          waitCaptchaSignal: () =>
+            new Promise((resolve) => {
+              appealCaptchaWaiter = resolve;
+            }),
+        });
+
+        const results = await runner.runAll(accountNames);
+
+        if (dashboard) {
+          dashboard.appealState = {
+            running: false,
+            waitingCaptcha: false,
+            currentAccount: null,
+            results,
+            startedAt: dashboard.appealState.startedAt,
+            completedAt: new Date().toISOString(),
+          };
+          dashboard.emitAppealComplete();
+        }
+
+        const submitted = results.filter((r) => r.status === 'submitted').length;
+        const skipped = results.filter((r) => r.status === 'skipped').length;
+        const failed = results.length - submitted - skipped;
+        logger.info(`Appeal done: submitted=${submitted}, skipped=${skipped}, failed=${failed}`);
+      } catch (error) {
+        logger.error(`Appeal error: ${error.message}`);
+        if (dashboard) {
+          dashboard.appealState.running = false;
+          dashboard.appealState.waitingCaptcha = false;
+          dashboard.appealState.completedAt = new Date().toISOString();
+          dashboard.emitAppealComplete();
+        }
+      } finally {
+        appealInProgress = false;
+        appealCaptchaWaiter = null;
       }
     })();
   }
@@ -408,6 +552,7 @@ async function main() {
 
   dashboard = new Dashboard(database, config, handleControl);
   dashboard.app.locals.botRunning = false;
+  dashboard.app.locals.botStopping = false;
   await dashboard.start(config.dashboard.port);
 
   const selectedConfigFile = await chooseConfigFileFromCli();

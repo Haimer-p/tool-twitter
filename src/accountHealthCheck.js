@@ -15,6 +15,7 @@ function makeCheckResult(ok, extra = {}) {
 }
 
 function computeStatus(checks) {
+  if (checks.suspended?.ok) return 'suspended';
   if (!checks.login?.ok) return 'dead';
   const rest = [checks.search, checks.like, checks.retweet, checks.reply];
   if (rest.every((c) => c?.ok)) return 'alive';
@@ -194,6 +195,7 @@ class AccountHealthChecker {
       screenshotUrl: null,
       checks: {
         login: makeCheckResult(false),
+        suspended: makeCheckResult(false),
         search: makeCheckResult(false),
         like: makeCheckResult(false),
         retweet: makeCheckResult(false),
@@ -212,10 +214,31 @@ class AccountHealthChecker {
       await browserManager.launch();
       const page = await browserManager.newPage();
 
-      const loginOk = await authManager.login(page, accountName, {
-        mode: 'health_check',
-      });
+      const cookies = await authManager.loadCookies(accountName);
+      if (!cookies || !cookies.length) {
+        result.checks.login = makeCheckResult(false, { error: 'No cookie file' });
+        result.screenshotUrl = await this.captureScreenshot(page, accountName).catch(() => null);
+        return result;
+      }
 
+      await page.setCookie(...cookies);
+      await authManager.gotoWithTimeout(
+        page,
+        `${this.config.baseUrl || 'https://x.com'}/home`,
+        90000
+      );
+      await sleep(3000);
+
+      const suspended = await authManager.isSuspendedOnPage(page);
+      if (suspended) {
+        result.checks.login = makeCheckResult(true, { note: 'session_ok' });
+        result.checks.suspended = makeCheckResult(true);
+        result.status = 'suspended';
+        result.screenshotUrl = await this.captureScreenshot(page, accountName).catch(() => null);
+        return result;
+      }
+
+      const loginOk = await authManager.isLoggedInOnPage(page);
       if (!loginOk) {
         result.checks.login = makeCheckResult(false, { error: 'Cookie expired or login failed' });
         result.screenshotUrl = await this.captureScreenshot(page, accountName).catch(() => null);
@@ -223,6 +246,7 @@ class AccountHealthChecker {
       }
 
       result.checks.login = makeCheckResult(true);
+      result.checks.suspended = makeCheckResult(false);
 
       const profile = await this.getProfileInfo(page);
       if (profile) {

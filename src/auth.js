@@ -63,13 +63,99 @@ class AuthManager {
       .catch(() => false);
   }
 
+  async isSuspendedOnPage(page) {
+    return page
+      .evaluate(() => {
+        const url = window.location.href.toLowerCase();
+        const urlHints =
+          url.includes('/account/access') ||
+          url.includes('/account/suspended') ||
+          url.includes('/account/locked') ||
+          (url.includes('/i/flow/') &&
+            (url.includes('suspended') || url.includes('locked') || url.includes('access')));
+
+        const bodyText = (document.body?.innerText || '').toLowerCase();
+        const textHints =
+          bodyText.includes('account suspended') ||
+          bodyText.includes('your account is suspended') ||
+          bodyText.includes('account has been suspended') ||
+          bodyText.includes('account is locked') ||
+          bodyText.includes('submit an appeal') ||
+          bodyText.includes('file an appeal') ||
+          (bodyText.includes('suspended') && bodyText.includes('appeal')) ||
+          (bodyText.includes('violat') && bodyText.includes('rules'));
+
+        return urlHints || textHints;
+      })
+      .catch(() => false);
+  }
+
   async waitForManualLogin(page, timeoutMs = 300000, checkEveryMs = 2500) {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
       if (await this.isLoggedInOnPage(page)) return true;
+      if (await this.isSuspendedOnPage(page)) return true;
       await sleep(checkEveryMs);
     }
     return false;
+  }
+
+  /**
+   * Login for appeal flow. Returns { ok, suspended, alive }.
+   * - suspended: session valid, account is suspended
+   * - alive: logged in normally (no appeal needed)
+   * - ok false: login failed
+   */
+  async loginForAppeal(page, accountName, options = {}) {
+    const manualTimeoutMs = options.manualTimeoutMs || 300000;
+    const navTimeoutMs = options.navigationTimeoutMs || 90000;
+    const cookies = await this.loadCookies(accountName);
+
+    const checkState = async () => {
+      if (await this.isLoggedInOnPage(page)) {
+        return { ok: true, suspended: false, alive: true };
+      }
+      if (await this.isSuspendedOnPage(page)) {
+        return { ok: true, suspended: true, alive: false };
+      }
+      return null;
+    };
+
+    if (cookies && cookies.length > 0) {
+      await page.setCookie(...cookies);
+      await this.gotoWithTimeout(page, `${this.baseUrl}/home`, navTimeoutMs);
+      await sleep(3000);
+
+      const state = await checkState();
+      if (state) {
+        if (state.suspended) {
+          logger.info(`${accountName}: suspended session via cookies`);
+        } else {
+          logger.info(`${accountName}: logged in via cookies (not suspended)`);
+        }
+        return state;
+      }
+      logger.warn(`${accountName}: cookies expired or invalid, manual login required`);
+    } else {
+      logger.warn(`${accountName}: no cookie file, manual login required`);
+    }
+
+    logger.info(`${accountName}: please log in manually in the browser for appeal`);
+    await this.gotoWithTimeout(page, `${this.baseUrl}/login`, navTimeoutMs);
+    const done = await this.waitForManualLogin(page, manualTimeoutMs);
+    if (!done) {
+      logger.warn(`${accountName}: manual login timeout (appeal)`);
+      return { ok: false, suspended: false, alive: false };
+    }
+
+    const newCookies = await page.cookies();
+    await this.saveCookies(accountName, newCookies);
+    logger.info(`${accountName}: cookies saved`);
+
+    const state = await checkState();
+    if (state) return state;
+
+    return { ok: false, suspended: false, alive: false };
   }
 
   async gotoWithTimeout(page, url, timeoutMs = 90000) {

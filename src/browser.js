@@ -10,7 +10,7 @@ class BrowserManager {
     this.browser = null;
   }
 
-  async launch() {
+  async launch(overrides = {}) {
     const args = [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -25,18 +25,22 @@ class BrowserManager {
       args.push(`--proxy-server=${this.config.browser.proxy}`);
     }
 
+    const headless =
+      overrides.headless !== undefined ? overrides.headless : this.config.browser.headless;
+
     this.browser = await puppeteer.launch({
-      headless: this.config.browser.headless,
+      headless,
       args,
+      ...overrides.launchOptions,
     });
 
-    logger.info('Browser launched');
+    logger.info(`Browser launched (headless=${headless})`);
     return this.browser;
   }
 
-  async newPage() {
+  async newPage(launchOverrides) {
     if (!this.browser) {
-      await this.launch();
+      await this.launch(launchOverrides);
     }
     const page = await this.browser.newPage();
     await page.setViewport(this.config.browser.viewport);

@@ -77,7 +77,15 @@ class EngagementBot {
   }
 
   async randomDelay(min, max) {
-    await sleep(randomMs(min, max));
+    const total = randomMs(min, max);
+    const step = 1000;
+    let elapsed = 0;
+    while (elapsed < total) {
+      if (!this.isActive()) return;
+      const chunk = Math.min(step, total - elapsed);
+      await sleep(chunk);
+      elapsed += chunk;
+    }
   }
 
   setupPageDialogs(page, ctx) {
@@ -857,6 +865,7 @@ class EngagementBot {
     let actionsToRun = [...actions];
 
     if (actions.includes('reply')) {
+      if (!this.isActive()) return successCount;
       const { canReply, reason } = await this.canReplyOnPage(page);
       if (!canReply) {
         logger.info(`[${ctx.accountName}] Reply skipped: ${reason}`);
@@ -1068,11 +1077,15 @@ class EngagementBot {
 
           interactionsThisRun += count;
 
+          if (!this.isActive()) break;
+
           await this.randomDelay(
             ctx.delays.betweenActions.min,
             ctx.delays.betweenActions.max
           );
         }
+
+        if (!this.isActive()) break;
 
         await this.randomDelay(
           ctx.delays.betweenSearchRounds?.min ||

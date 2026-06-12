@@ -315,6 +315,97 @@ Return ONLY the reply text.
     return this.finalizeReply(this.fallbackReply(tweetText), replyOptions);
   }
 
+  buildAppealPrompt({ username, suspendReason, accountName, language = 'en' }) {
+    const handle = username ? `@${username}` : accountName || 'my account';
+    const reasonBlock = suspendReason
+      ? `\nStated suspension reason on the page: "${suspendReason}"`
+      : '';
+
+    return `
+Write a formal Twitter/X account suspension appeal in ${language === 'vi' ? 'Vietnamese' : 'English'}.
+
+Account: ${handle}${reasonBlock}
+
+Rules:
+- Polite, professional tone — request a review because the suspension appears to be a mistake
+- Explain the account is used legitimately for crypto/Web3 discussion and community engagement
+- State you do not use bots, spam, or automated mass actions; you follow X rules
+- Commit to continuing compliant use if the account is restored
+- Length: 150–500 characters
+- Return ONLY the appeal text — no quotes, labels, or markdown
+
+Return ONLY the appeal text.
+`.trim();
+  }
+
+  finalizeAppealText(raw, options = {}) {
+    const minLen = options.minLength ?? 150;
+    const maxLen = options.maxLength ?? 500;
+    let text = String(raw || '')
+      .trim()
+      .replace(/^["'`]+|["'`]+$/g, '')
+      .replace(/^\*\*|\*\*$/g, '');
+
+    if (text.length > maxLen) {
+      text = text.slice(0, maxLen - 3).trimEnd() + '...';
+    }
+    if (text.length < minLen) {
+      text = this.fallbackAppealText(options);
+    }
+    return text;
+  }
+
+  fallbackAppealText({ username, accountName } = {}) {
+    const handle = username ? `@${username}` : accountName || 'my account';
+    return (
+      `Hello, I believe ${handle} was suspended in error. I use this account personally to discuss ` +
+      `crypto and Web3 topics, engage with the community, and share legitimate content. I do not run bots ` +
+      `or spam, and I respect X's rules. Please review my account and restore access. I will continue ` +
+      `to use the platform responsibly. Thank you.`
+    );
+  }
+
+  async generateAppealText(meta = {}) {
+    const appealCfg = this.config.appeal || {};
+    const options = {
+      minLength: appealCfg.appealMinLength ?? 150,
+      maxLength: appealCfg.appealMaxLength ?? 500,
+      username: meta.username,
+      accountName: meta.accountName,
+    };
+    const prompt = this.buildAppealPrompt({
+      ...meta,
+      language: appealCfg.language || 'en',
+    });
+    const providers = this.getProviderOrder();
+
+    if (providers.length === 0) {
+      logger.warn('No AI provider for appeal — using fallback template');
+      return this.finalizeAppealText(this.fallbackAppealText(options), options);
+    }
+
+    logger.info(`AI appeal providers: ${providers.join(' → ')}`);
+
+    for (const provider of providers) {
+      try {
+        let raw;
+        if (provider === 'gemini') {
+          raw = await this.generateGemini(prompt);
+        } else if (provider === 'deepseek') {
+          raw = await this.generateDeepSeek(prompt);
+        }
+        if (raw) {
+          return this.finalizeAppealText(raw, options);
+        }
+      } catch (error) {
+        logger.warn(`Appeal ${provider} failed: ${error.message?.slice(0, 120)}`);
+      }
+    }
+
+    logger.warn('All AI providers failed for appeal — using fallback template');
+    return this.finalizeAppealText(this.fallbackAppealText(options), options);
+  }
+
   fallbackReply(tweetText) {
     const fallbacks = [
       `Interesting take on ${this.extractTopic(tweetText)} — watching this closely`,

@@ -92,6 +92,17 @@ module.exports = {
     },
   },
 
+  appeal: {
+    language: process.env.APPEAL_LANGUAGE || 'en',
+    manualCaptchaTimeoutMs: parseInt(process.env.APPEAL_CAPTCHA_TIMEOUT_MS || '600000', 10),
+    appealMinLength: parseInt(process.env.APPEAL_MIN_LENGTH || '150', 10),
+    appealMaxLength: parseInt(process.env.APPEAL_MAX_LENGTH || '500', 10),
+    delays: {
+      betweenSteps: { min: 2000, max: 4000 },
+      typing: { min: 40, max: 100 },
+    },
+  },
+
   keywords: [
     'crypto',
     'bitcoin',

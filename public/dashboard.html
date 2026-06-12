@@ -78,6 +78,17 @@
     .health-pill.alive { background: #d5f5e3; color: #1e8449; }
     .health-pill.partial { background: #fdebd0; color: #b7950b; }
     .health-pill.dead { background: #fadbd8; color: #c0392b; }
+    .health-pill.suspended { background: #fdebd0; color: #d35400; }
+    .appeal-section { background: white; border-radius: 15px; padding: 20px; margin-bottom: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); }
+    .appeal-section h3 { margin-bottom: 16px; color: #333; }
+    .btn-appeal { background: #e67e22; color: white; }
+    .btn-captcha { background: #16a085; color: white; }
+    .appeal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-top: 12px; }
+    .appeal-card { border: 1px solid #eee; border-radius: 10px; padding: 12px; background: #fafafa; font-size: 13px; }
+    .appeal-text-preview { margin-top: 8px; padding: 8px; background: #fff; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; color: #444; max-height: 80px; overflow: auto; }
+    .appeal-account-pick { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+    .appeal-account-pick label { font-size: 13px; background: #f4f4f4; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+    .health-btn-appeal { margin-top: 8px; padding: 6px 12px; font-size: 12px; background: #e67e22; color: white; border: none; border-radius: 6px; cursor: pointer; }
     .health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
     .health-card { border: 1px solid #eee; border-radius: 12px; padding: 14px; background: #fafafa; }
     .health-card-header { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
@@ -132,6 +143,20 @@
       </div>
     </div>
 
+    <div class="appeal-section">
+      <h3>Khiếu nại account suspend</h3>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+        <button class="btn btn-appeal" id="appealAllBtn" onclick="runAppealAllSuspended()">Khiếu nại tất cả suspend</button>
+        <button class="btn btn-appeal" id="appealSelectedBtn" onclick="runAppealSelected()">Khiếu nại acc đã chọn</button>
+        <button class="btn btn-captcha" id="captchaDoneBtn" onclick="signalCaptchaDone()" disabled>Đã xong captcha</button>
+        <span class="health-status-text" id="appealStatusText">Chưa chạy</span>
+      </div>
+      <div class="appeal-account-pick" id="appealAccountPick"></div>
+      <div class="appeal-grid" id="appealGrid">
+        <div style="color:#999;padding:8px">Chạy health check trước để phát hiện acc suspend, hoặc chọn acc bên dưới.</div>
+      </div>
+    </div>
+
     <div class="chart-container">
       <h3>Thống kê theo ngày</h3>
       <canvas id="interactionChart"></canvas>
@@ -149,8 +174,9 @@
         <option value="vua" selected>Chế độ: vừa (2.5–5p/tweet)</option>
         <option value="manh">Chế độ: mạnh (1.5–3p/tweet)</option>
       </select>
-      <button class="btn btn-start" onclick="controlBot('start')">Chạy bot</button>
-      <button class="btn btn-stop" onclick="controlBot('stop')">Dừng bot</button>
+      <button class="btn btn-start" id="startBotBtn" onclick="controlBot('start')">Chạy bot</button>
+      <button class="btn btn-stop" id="stopBotBtn" onclick="controlBot('stop')">Dừng bot</button>
+      <span class="health-status-text" id="botStatusText">Bot: chưa chạy</span>
     </div>
     <div class="refresh-time" id="refreshTime">Cập nhật: --</div>
   </div>
@@ -234,12 +260,14 @@
 
       const alive = results.filter((r) => r.status === 'alive').length;
       const partial = results.filter((r) => r.status === 'partial').length;
+      const suspended = results.filter((r) => r.status === 'suspended').length;
       const dead = results.filter((r) => r.status === 'dead').length;
 
       if (results.length) {
         summary.innerHTML = `
           <span class="health-pill alive">Sống: ${alive}</span>
           <span class="health-pill partial">Một phần: ${partial}</span>
+          <span class="health-pill suspended">Suspend: ${suspended}</span>
           <span class="health-pill dead">Chết: ${dead}</span>
         `;
       } else {
@@ -260,7 +288,10 @@
         const shot = r.screenshotUrl
           ? `<img class="health-shot" data-account="${r.accountName}" alt="screenshot" onclick="openHealthScreenshot('${r.accountName}')">`
           : '';
-        const statusColor = r.status === 'alive' ? '#1e8449' : r.status === 'partial' ? '#b7950b' : '#c0392b';
+        const statusColor = r.status === 'alive' ? '#1e8449' : r.status === 'partial' ? '#b7950b' : r.status === 'suspended' ? '#d35400' : '#c0392b';
+        const appealBtn = r.status === 'suspended'
+          ? `<button class="health-btn-appeal" onclick="runAppealOne('${r.accountName}')">Khiếu nại</button>`
+          : '';
         return `
           <div class="health-card">
             <div class="health-card-header">
@@ -274,18 +305,127 @@
             </div>
             <div class="health-badges">
               ${badgeHtml('Login', r.checks?.login)}
+              ${r.status === 'suspended' ? badgeHtml('Suspend', r.checks?.suspended) : ''}
               ${badgeHtml('Search', r.checks?.search)}
               ${badgeHtml('Like', r.checks?.like)}
               ${badgeHtml('RT', r.checks?.retweet)}
               ${badgeHtml('Reply', r.checks?.reply)}
             </div>
             ${shot}
+            ${appealBtn}
             <div class="health-meta">${formatTime(r.testedAt)} · ${Math.round((r.durationMs || 0) / 1000)}s</div>
           </div>
         `;
       }).join('');
 
       attachHealthScreenshots();
+      refreshAppealAccountPick(results);
+    }
+
+    function refreshAppealAccountPick(healthResults) {
+      const pick = document.getElementById('appealAccountPick');
+      const names = new Set();
+      (healthResults || []).forEach((r) => names.add(r.accountName));
+      apiFetch('/api/accounts').then((data) => {
+        (data.accounts || []).forEach((a) => names.add(a));
+        if (!names.size) {
+          pick.innerHTML = '<span style="color:#999;font-size:13px">Chưa có account</span>';
+          return;
+        }
+        pick.innerHTML = [...names].map((n) => `
+          <label><input type="checkbox" class="appeal-acc-cb" value="${n}"> ${n}</label>
+        `).join('');
+      }).catch(() => {});
+    }
+
+    function getSelectedAppealAccounts() {
+      return [...document.querySelectorAll('.appeal-acc-cb:checked')].map((el) => el.value);
+    }
+
+    async function runAppealRequest(body) {
+      document.getElementById('appealStatusText').textContent = 'Đang khởi động...';
+      document.getElementById('appealAllBtn').disabled = true;
+      document.getElementById('appealSelectedBtn').disabled = true;
+      await fetch('/api/control/account-appeal', {
+        method: 'POST',
+        headers: { Authorization: getAuthHeader(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    }
+
+    function runAppealAllSuspended() {
+      runAppealRequest({});
+    }
+
+    function runAppealSelected() {
+      const accountNames = getSelectedAppealAccounts();
+      if (!accountNames.length) {
+        alert('Chọn ít nhất một account');
+        return;
+      }
+      runAppealRequest({ accountNames, force: true });
+    }
+
+    function runAppealOne(accountName) {
+      runAppealRequest({ accountNames: [accountName], force: true });
+    }
+
+    async function signalCaptchaDone() {
+      await fetch('/api/control/appeal-captcha-done', {
+        method: 'POST',
+        headers: { Authorization: getAuthHeader(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+    }
+
+    function renderAppealState(state) {
+      const statusEl = document.getElementById('appealStatusText');
+      const captchaBtn = document.getElementById('captchaDoneBtn');
+      const allBtn = document.getElementById('appealAllBtn');
+      const selBtn = document.getElementById('appealSelectedBtn');
+      const grid = document.getElementById('appealGrid');
+      const results = state?.results || [];
+
+      if (state?.running) {
+        statusEl.textContent = state.waitingCaptcha
+          ? `Chờ captcha: ${state.currentAccount || '...'}`
+          : `Đang chạy: ${state.currentAccount || '...'}`;
+        if (allBtn) allBtn.disabled = true;
+        if (selBtn) selBtn.disabled = true;
+      } else if (state?.completedAt) {
+        statusEl.textContent = 'Hoàn tất: ' + formatTime(state.completedAt);
+        if (allBtn) allBtn.disabled = false;
+        if (selBtn) selBtn.disabled = false;
+      } else {
+        statusEl.textContent = 'Chưa chạy';
+        if (allBtn) allBtn.disabled = false;
+        if (selBtn) selBtn.disabled = false;
+      }
+
+      captchaBtn.disabled = !state?.waitingCaptcha;
+
+      if (!results.length && !state?.running) {
+        grid.innerHTML = '<div style="color:#999;padding:8px">Chạy health check hoặc chọn account để khiếu nại.</div>';
+        return;
+      }
+
+      grid.innerHTML = results.map((r) => `
+        <div class="appeal-card">
+          <strong>${r.accountName}</strong> — <span style="color:${r.status === 'submitted' ? '#1e8449' : '#c0392b'}">${r.status}</span>
+          ${r.error ? `<div style="color:#c0392b;margin-top:4px">${r.error}</div>` : ''}
+          ${r.appealText ? `<div class="appeal-text-preview">${r.appealText.replace(/</g, '&lt;')}</div>` : ''}
+          <div class="health-meta">${formatTime(r.testedAt)} · ${Math.round((r.durationMs || 0) / 1000)}s</div>
+        </div>
+      `).join('');
+    }
+
+    async function loadAppealResults() {
+      try {
+        const state = await apiFetch('/api/appeal/results');
+        renderAppealState(state);
+      } catch {
+        /* ignore */
+      }
     }
 
     async function attachHealthScreenshots() {
@@ -376,6 +516,30 @@
       document.getElementById('refreshTime').textContent = 'Cập nhật: ' + formatTime(data.timestamp);
     }
 
+    function renderBotStatus(status) {
+      const el = document.getElementById('botStatusText');
+      const startBtn = document.getElementById('startBotBtn');
+      const stopBtn = document.getElementById('stopBotBtn');
+      if (!el) return;
+
+      if (status?.stopping) {
+        el.textContent = 'Bot: đang dừng...';
+        el.style.color = '#b7950b';
+        if (startBtn) startBtn.disabled = true;
+        if (stopBtn) stopBtn.disabled = true;
+      } else if (status?.running) {
+        el.textContent = 'Bot: đang chạy';
+        el.style.color = '#1e8449';
+        if (startBtn) startBtn.disabled = true;
+        if (stopBtn) stopBtn.disabled = false;
+      } else {
+        el.textContent = 'Bot: đã dừng';
+        el.style.color = '#666';
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
+      }
+    }
+
     async function controlBot(action) {
       const payload = action === 'start'
         ? {
@@ -383,11 +547,23 @@
             runProfile: document.getElementById('runProfileSelect').value || 'vua',
           }
         : {};
-      await fetch('/api/control/' + action, {
-        method: 'POST',
-        headers: { Authorization: getAuthHeader(), 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      try {
+        const res = await fetch('/api/control/' + action, {
+          method: 'POST',
+          headers: { Authorization: getAuthHeader(), 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error(res.status === 401 ? 'Sai user/password' : await res.text());
+        const data = await res.json();
+        if (action === 'stop') {
+          renderBotStatus({ running: true, stopping: true });
+        } else if (action === 'start') {
+          renderBotStatus({ running: true, stopping: false });
+        }
+        return data;
+      } catch (e) {
+        alert('Không gửi được lệnh ' + action + ': ' + e.message);
+      }
     }
 
     async function loadAccountOptions() {
@@ -450,6 +626,18 @@
       socket.on('health-check-complete', (payload) => {
         if (payload?.state) renderHealthState(payload.state);
       });
+      socket.on('bot-status-update', (payload) => {
+        renderBotStatus(payload);
+      });
+      socket.on('appeal-update', (payload) => {
+        if (payload?.state) renderAppealState(payload.state);
+      });
+      socket.on('appeal-complete', (payload) => {
+        if (payload?.state) renderAppealState(payload.state);
+      });
+      socket.on('appeal-waiting-captcha', (payload) => {
+        if (payload?.state) renderAppealState(payload.state);
+      });
     }
 
     async function initialFetch() {
@@ -460,7 +648,10 @@
         await loadConfigSelectors();
         await loadAccountOptions();
         await loadHealthResults();
+        await loadAppealResults();
+        refreshAppealAccountPick([]);
         document.getElementById('runProfileSelect').value = status.runProfile || 'vua';
+        renderBotStatus(status);
         updateDashboard({ stats: stats.totals, chartData: stats.stats, recentActivities: activities, timestamp: new Date() });
       } catch (e) {
         document.getElementById('activityList').innerHTML = '<div style="color:#c0392b;padding:20px">Cần đăng nhập đúng user/password (mặc định admin / admin123)</div>';

@@ -45,19 +45,21 @@ async function main() {
 
   let alive = 0;
   let partial = 0;
+  let suspended = 0;
   let dead = 0;
   for (const r of results) {
     printResult(r);
     if (r.status === 'alive') alive++;
     else if (r.status === 'partial') partial++;
+    else if (r.status === 'suspended') suspended++;
     else dead++;
   }
 
   console.log('\n=== Summary ===');
-  console.log(`Alive: ${alive}  Partial: ${partial}  Dead: ${dead}`);
+  console.log(`Alive: ${alive}  Partial: ${partial}  Suspended: ${suspended}  Dead: ${dead}`);
 
   await db.disconnect();
-  process.exit(dead > 0 || partial > 0 ? 1 : 0);
+  process.exit(dead > 0 || partial > 0 || suspended > 0 ? 1 : 0);
 }
 
 main().catch((err) => {
