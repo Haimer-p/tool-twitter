@@ -17,8 +17,6 @@ const APPEAL_BUTTON_TEXTS = [
   'appeal',
 ];
 
-const SUBMIT_BUTTON_TEXTS = ['submit', 'send', 'continue'];
-
 function normalizeText(s) {
   return String(s || '')
     .toLowerCase()
@@ -80,6 +78,10 @@ class AccountAppealRunner {
     return false;
   }
 
+  getAppealFormUrl() {
+    return this.config.appeal?.formUrl || 'https://help.x.com/en/forms/account-access/appeals';
+  }
+
   async scrapeSuspendInfo(page) {
     return page
       .evaluate(() => {
@@ -113,94 +115,233 @@ class AccountAppealRunner {
       .catch(() => ({ suspendReason: null, username: null, pageSnippet: '' }));
   }
 
-  async findTextInput(page) {
-    const selectors = [
-      'textarea',
-      '[data-testid="ocfEnterTextTextInput"]',
-      '[contenteditable="true"][role="textbox"]',
-      'div[role="textbox"]',
-    ];
-    for (const sel of selectors) {
-      const el = await page.$(sel);
-      if (el) return sel;
-    }
-    return null;
+  async scrapeHelpAppealFormInfo(page) {
+    return page
+      .evaluate(() => {
+        let username = null;
+        let email = null;
+
+        for (const label of document.querySelectorAll('label')) {
+          const labelText = (label.textContent || '').toLowerCase();
+          const id = label.getAttribute('for');
+          const field = id ? document.getElementById(id) : null;
+          const value = field?.value?.trim() || '';
+
+          if (labelText.includes('x username') || labelText.includes('username')) {
+            if (value.startsWith('@')) username = value.slice(1);
+            else if (value) username = value;
+          }
+          if (labelText.includes('email')) {
+            email = value || null;
+          }
+        }
+
+        if (!username) {
+          for (const input of document.querySelectorAll('input')) {
+            const val = (input.value || '').trim();
+            if (val.startsWith('@')) {
+              username = val.slice(1);
+              break;
+            }
+          }
+        }
+
+        return { username, email };
+      })
+      .catch(() => ({ username: null, email: null }));
   }
 
-  async humanTypeIn(page, selector, text) {
-    const typing = this.getDelays().typing;
-    await page.click(selector);
+  async humanTypeInElement(page, elementHandle, text) {
+    const delays = this.getDelays();
+    const typing = delays.typing;
+    const pauseEvery = delays.typingPauseEvery || { min: 25, max: 45 };
+    const pauseDuration = delays.typingPauseDuration || { min: 400, max: 1200 };
+
+    await elementHandle.click();
+    await sleep(randomMs(400, 900));
+
     await page.keyboard.down('Control');
     await page.keyboard.press('KeyA');
     await page.keyboard.up('Control');
     await page.keyboard.press('Backspace');
-    await page.keyboard.type(text, { delay: randomMs(typing.min, typing.max) });
-  }
+    await sleep(randomMs(250, 600));
 
-  async navigateToAppealForm(page, accountName) {
-    const authManager = new AuthManager(this.accountsDir, this.config.baseUrl);
+    let charsSincePause = 0;
+    let nextPauseAt = randomMs(pauseEvery.min, pauseEvery.max);
 
-    if (!(await authManager.isSuspendedOnPage(page))) {
-      await page.goto(`${this.config.baseUrl}/account/access`, {
-        waitUntil: 'domcontentloaded',
-        timeout: 60000,
-      });
-      await sleep(2000);
-    }
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      await page.keyboard.sendCharacter(ch);
 
-    if (await authManager.isSuspendedOnPage(page)) {
-      const clicked = await this.clickByTexts(page, APPEAL_BUTTON_TEXTS);
-      if (clicked) {
-        await sleep(randomMs(2000, 4000));
-        return true;
+      let delay = randomMs(typing.min, typing.max);
+      if (ch === ' ' || ch === '.' || ch === ',' || ch === '\n') {
+        delay += randomMs(120, 350);
+      }
+
+      await sleep(delay);
+
+      charsSincePause += 1;
+      if (charsSincePause >= nextPauseAt) {
+        await sleep(randomMs(pauseDuration.min, pauseDuration.max));
+        charsSincePause = 0;
+        nextPauseAt = randomMs(pauseEvery.min, pauseEvery.max);
       }
     }
 
-    const clicked = await this.clickByTexts(page, APPEAL_BUTTON_TEXTS);
-    if (clicked) {
-      await sleep(randomMs(2000, 4000));
-      return true;
+    await sleep(randomMs(300, 700));
+  }
+
+  async findDescriptionTextarea(page) {
+    const handle = await page.evaluateHandle(() => {
+      const hasDescriptionLabel = (el) =>
+        (el.textContent || '').toLowerCase().includes('description of the problem');
+
+      for (const label of document.querySelectorAll('label')) {
+        if (!hasDescriptionLabel(label)) continue;
+        const id = label.getAttribute('for');
+        if (id) {
+          const target = document.getElementById(id);
+          if (target?.tagName === 'TEXTAREA') return target;
+        }
+        const parent = label.closest('div, fieldset, section, form');
+        const ta = parent?.querySelector('textarea');
+        if (ta) return ta;
+      }
+
+      for (const el of document.querySelectorAll('*')) {
+        if (!hasDescriptionLabel(el)) continue;
+        let node = el;
+        for (let i = 0; i < 6 && node; i++) {
+          const ta = node.querySelector?.('textarea');
+          if (ta) return ta;
+          node = node.parentElement;
+        }
+      }
+
+      const textareas = [...document.querySelectorAll('textarea')];
+      if (!textareas.length) return null;
+      const empty = textareas.find((ta) => !(ta.value || '').trim());
+      return empty || textareas[textareas.length - 1];
+    });
+
+    const element = handle.asElement();
+    if (!element) {
+      await handle.dispose();
+      return null;
+    }
+    return element;
+  }
+
+  async waitForHelpAppealForm(page, accountName) {
+    const ready = await page
+      .waitForFunction(
+        () => {
+          const body = (document.body?.innerText || '').toLowerCase();
+          return (
+            body.includes('description of the problem') ||
+            body.includes('appeal a locked or suspended account')
+          );
+        },
+        { timeout: 45000 }
+      )
+      .catch(() => null);
+
+    if (!ready) {
+      logger.warn(`[${accountName}] Help appeal form text not detected`);
+      return false;
     }
 
-    logger.warn(`[${accountName}] Appeal button not found — trying account/access again`);
-    await page.goto(`${this.config.baseUrl}/account/access`, {
-      waitUntil: 'domcontentloaded',
-      timeout: 60000,
-    });
-    await sleep(2000);
-    const retry = await this.clickByTexts(page, APPEAL_BUTTON_TEXTS);
-    return retry;
+    const textarea = await this.findDescriptionTextarea(page);
+    return !!textarea;
+  }
+
+  async openHelpAppealForm(browser, page, accountName) {
+    const formUrl = this.getAppealFormUrl();
+    logger.info(`[${accountName}] Opening Help Center appeal form: ${formUrl}`);
+
+    const pagesBefore = (await browser.pages()).length;
+
+    await page.goto(formUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+    await sleep(3000);
+
+    if (await this.waitForHelpAppealForm(page, accountName)) {
+      return page;
+    }
+
+    const authManager = new AuthManager(this.accountsDir, this.config.baseUrl);
+    if (await authManager.isSuspendedOnPage(page)) {
+      logger.info(`[${accountName}] On x.com suspend page — clicking appeal link`);
+      const clicked = await this.clickByTexts(page, APPEAL_BUTTON_TEXTS, {
+        tags: ['a', 'button', 'span', 'div[role="button"]'],
+      });
+      if (clicked) {
+        await sleep(randomMs(3000, 5000));
+        const pages = await browser.pages();
+        if (pages.length > pagesBefore) {
+          const helpPage = pages[pages.length - 1];
+          await helpPage.bringToFront();
+          await sleep(2000);
+          if (await this.waitForHelpAppealForm(helpPage, accountName)) {
+            return helpPage;
+          }
+        }
+      }
+    }
+
+    await page.goto(formUrl, { waitUntil: 'networkidle2', timeout: 90000 }).catch(() => null);
+    await sleep(3000);
+    if (await this.waitForHelpAppealForm(page, accountName)) {
+      return page;
+    }
+
+    return null;
   }
 
   async fillAppealForm(page, text, accountName) {
-    const inputSel = await this.findTextInput(page);
-    if (!inputSel) {
-      logger.error(`[${accountName}] Appeal textarea not found`);
+    const textarea = await this.findDescriptionTextarea(page);
+    if (!textarea) {
+      logger.error(`[${accountName}] "Description of the problem" textarea not found`);
       return false;
     }
-    await this.humanTypeIn(page, inputSel, text);
+
+    await this.humanTypeInElement(page, textarea, text);
     await sleep(randomMs(1000, 2000));
+
+    const filled = await textarea.evaluate((el) => (el.value || '').trim().length > 20);
+    await textarea.dispose();
+    if (!filled) {
+      logger.error(`[${accountName}] Description field still empty after fill`);
+      return false;
+    }
+
+    logger.info(`[${accountName}] Filled "Description of the problem" (${text.length} chars)`);
     return true;
   }
 
   async submitAppealForm(page, accountName) {
-    const clicked = await this.clickByTexts(page, SUBMIT_BUTTON_TEXTS);
-    if (!clicked) {
-      const submitted = await page
-        .evaluate(() => {
-          const btn = document.querySelector('[data-testid="ocfEnterTextNextButton"]');
-          if (btn) {
+    const clicked = await page
+      .evaluate(() => {
+        const candidates = [
+          ...document.querySelectorAll('button'),
+          ...document.querySelectorAll('input[type="submit"]'),
+        ];
+        for (const btn of candidates) {
+          const label = (btn.textContent || btn.value || '').trim().toLowerCase();
+          if (label === 'submit') {
+            btn.scrollIntoView({ block: 'center' });
             btn.click();
             return true;
           }
-          return false;
-        })
-        .catch(() => false);
-      if (!submitted) {
-        logger.error(`[${accountName}] Submit button not found`);
+        }
         return false;
-      }
+      })
+      .catch(() => false);
+
+    if (!clicked) {
+      logger.error(`[${accountName}] Submit button not found on help.x.com form`);
+      return false;
     }
+
     await sleep(randomMs(2000, 4000));
     return true;
   }
@@ -297,7 +438,7 @@ class AccountAppealRunner {
     const ai = new AIService(this.config);
 
     try {
-      await browserManager.launch({ headless: false });
+      await browserManager.launch({ headless: false, captchaFriendly: true });
       const page = await browserManager.newPage();
       page.setDefaultNavigationTimeout(90000);
 
@@ -324,51 +465,66 @@ class AccountAppealRunner {
 
       await sleep(randomMs(delays.betweenSteps.min, delays.betweenSteps.max));
 
-      const info = await this.scrapeSuspendInfo(page);
-      result.username = info.username;
-      result.suspendReason = info.suspendReason;
+      const suspendInfo = await this.scrapeSuspendInfo(page);
+      result.username = suspendInfo.username;
+      result.suspendReason = suspendInfo.suspendReason;
 
-      const formOpened = await this.navigateToAppealForm(page, accountName);
-      if (!formOpened) {
-        result.status = 'appeal_button_not_found';
-        result.error = 'Could not find or click appeal button';
+      const appealPage = await this.openHelpAppealForm(
+        browserManager.browser,
+        page,
+        accountName
+      );
+      if (!appealPage) {
+        result.status = 'appeal_form_not_found';
+        result.error = 'Could not open help.x.com appeal form';
         result.screenshotUrl = await this.captureScreenshot(page, accountName).catch(() => null);
         return result;
       }
 
       await sleep(randomMs(delays.betweenSteps.min, delays.betweenSteps.max));
 
+      const formInfo = await this.scrapeHelpAppealFormInfo(appealPage);
+      if (formInfo.username) result.username = formInfo.username;
+
       const appealText = await ai.generateAppealText({
-        username: info.username,
-        suspendReason: info.suspendReason,
+        username: result.username || formInfo.username,
+        suspendReason: result.suspendReason,
         accountName,
       });
       result.appealText = appealText;
 
-      const filled = await this.fillAppealForm(page, appealText, accountName);
+      const filled = await this.fillAppealForm(appealPage, appealText, accountName);
       if (!filled) {
         result.status = 'form_fill_failed';
-        result.error = 'Could not fill appeal textarea';
-        result.screenshotUrl = await this.captureScreenshot(page, accountName).catch(() => null);
+        result.error = 'Could not fill "Description of the problem" on help.x.com';
+        result.screenshotUrl = await this.captureScreenshot(appealPage, accountName).catch(
+          () => null
+        );
         return result;
       }
 
       await sleep(randomMs(delays.betweenSteps.min, delays.betweenSteps.max));
 
-      const submitted = await this.submitAppealForm(page, accountName);
+      const submitted = await this.submitAppealForm(appealPage, accountName);
       if (!submitted) {
         result.status = 'submit_failed';
-        result.error = 'Could not click submit';
-        result.screenshotUrl = await this.captureScreenshot(page, accountName).catch(() => null);
+        result.error = 'Could not click Submit on help.x.com form';
+        result.screenshotUrl = await this.captureScreenshot(appealPage, accountName).catch(
+          () => null
+        );
         return result;
       }
 
-      result.screenshotUrl = await this.captureScreenshot(page, accountName).catch(() => null);
+      result.screenshotUrl = await this.captureScreenshot(appealPage, accountName).catch(
+        () => null
+      );
 
-      const captchaResult = await this.waitForManualCaptcha(page, accountName);
+      const captchaResult = await this.waitForManualCaptcha(appealPage, accountName);
       if (captchaResult.ok) {
         result.status = 'submitted';
-        result.screenshotUrl = await this.captureScreenshot(page, accountName).catch(() => null);
+        result.screenshotUrl = await this.captureScreenshot(appealPage, accountName).catch(
+          () => null
+        );
       } else {
         result.status = 'captcha_timeout';
         result.error = 'Captcha not completed within timeout';

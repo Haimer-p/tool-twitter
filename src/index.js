@@ -22,6 +22,7 @@ const {
   resolveConfigPath,
 } = require('./accountConfig');
 const logger = require('./logger');
+const { persistHealthCheckResults, loadHealthCheckReport } = require('./healthCheckReport');
 
 let bot = null;
 let dashboard = null;
@@ -36,6 +37,8 @@ let runtimeState = {
 };
 let loginInProgress = false;
 let healthCheckInProgress = false;
+let healthCheckStopRequested = false;
+let healthCheckCurrentBrowser = null;
 let appealInProgress = false;
 let appealCaptchaWaiter = null;
 
@@ -302,6 +305,24 @@ function handleControl(action, data) {
     })();
   }
 
+  if (action === 'health_check_stop') {
+    if (!healthCheckInProgress) {
+      logger.warn('Health check stop ignored: not running');
+      return;
+    }
+    healthCheckStopRequested = true;
+    if (dashboard) {
+      dashboard.healthCheckState.stopping = true;
+      dashboard.emitHealthCheckUpdate({ type: 'stopping' });
+    }
+    if (healthCheckCurrentBrowser) {
+      healthCheckCurrentBrowser.close().catch(() => null);
+      healthCheckCurrentBrowser = null;
+    }
+    logger.info('Health check stop signal received — finishing current account...');
+    return;
+  }
+
   if (action === 'health_check') {
     if (healthCheckInProgress) {
       logger.warn('Health check ignored: already in progress');
@@ -317,6 +338,8 @@ function handleControl(action, data) {
     }
 
     healthCheckInProgress = true;
+    healthCheckStopRequested = false;
+    healthCheckCurrentBrowser = null;
     const accountsDir = path.join(process.cwd(), 'accounts');
 
     (async () => {
@@ -335,6 +358,7 @@ function handleControl(action, data) {
         if (dashboard) {
           dashboard.healthCheckState = {
             running: true,
+            stopping: false,
             results: [],
             startedAt: new Date().toISOString(),
             completedAt: null,
@@ -346,6 +370,10 @@ function handleControl(action, data) {
 
         const checker = new AccountHealthChecker(config, database, {
           accountsDir,
+          shouldStop: () => healthCheckStopRequested,
+          onBrowserCreated: (bm) => {
+            healthCheckCurrentBrowser = bm;
+          },
           onProgress: (payload) => {
             if (!dashboard) return;
             if (payload.results) {
@@ -356,33 +384,52 @@ function handleControl(action, data) {
         });
 
         const results = await checker.runAll(accountNames);
+        const stoppedEarly = healthCheckStopRequested;
+        const completedAt = new Date().toISOString();
+        const startedAt = dashboard?.healthCheckState?.startedAt;
+
+        const persisted = await persistHealthCheckResults(database, config, results, {
+          startedAt,
+          completedAt,
+          stoppedEarly,
+        });
 
         if (dashboard) {
           dashboard.healthCheckState = {
+            ...persisted.state,
             running: false,
+            stopping: false,
+            stoppedEarly,
             results,
-            startedAt: dashboard.healthCheckState.startedAt,
-            completedAt: new Date().toISOString(),
+            startedAt,
+            completedAt,
           };
           dashboard.emitHealthCheckComplete();
         }
+
+        logger.info(`Health check report: logs/health-check/latest-report.txt`);
 
         const alive = results.filter((r) => r.status === 'alive').length;
         const dead = results.filter((r) => r.status === 'dead').length;
         const partial = results.filter((r) => r.status === 'partial').length;
         const suspended = results.filter((r) => r.status === 'suspended').length;
         logger.info(
-          `Health check done: alive=${alive}, partial=${partial}, suspended=${suspended}, dead=${dead}`
+          stoppedEarly
+            ? `Health check stopped early: ${results.length} account(s) checked`
+            : `Health check done: alive=${alive}, partial=${partial}, suspended=${suspended}, dead=${dead}`
         );
       } catch (error) {
         logger.error(`Health check error: ${error.message}`);
         if (dashboard) {
           dashboard.healthCheckState.running = false;
+          dashboard.healthCheckState.stopping = false;
           dashboard.healthCheckState.completedAt = new Date().toISOString();
           dashboard.emitHealthCheckComplete();
         }
       } finally {
         healthCheckInProgress = false;
+        healthCheckStopRequested = false;
+        healthCheckCurrentBrowser = null;
       }
     })();
   }
@@ -553,6 +600,7 @@ async function main() {
   dashboard = new Dashboard(database, config, handleControl);
   dashboard.app.locals.botRunning = false;
   dashboard.app.locals.botStopping = false;
+  await dashboard.loadPersistedHealthCheck();
   await dashboard.start(config.dashboard.port);
 
   const selectedConfigFile = await chooseConfigFileFromCli();

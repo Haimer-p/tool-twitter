@@ -10,29 +10,60 @@ class BrowserManager {
     this.browser = null;
   }
 
-  async launch(overrides = {}) {
+  buildLaunchArgs(overrides = {}) {
+    const viewport = this.config.browser.viewport;
+    const captchaFriendly = !!overrides.captchaFriendly;
+
     const args = [
       '--no-sandbox',
       '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--disable-gpu',
-      `--window-size=${this.config.browser.viewport.width},${this.config.browser.viewport.height}`,
+      `--window-size=${viewport.width},${viewport.height}`,
       '--disable-blink-features=AutomationControlled',
     ];
+
+    if (!captchaFriendly) {
+      args.push(
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu'
+      );
+    }
 
     if (this.config.browser.proxy) {
       args.push(`--proxy-server=${this.config.browser.proxy}`);
     }
 
+    if (Array.isArray(overrides.extraArgs)) {
+      args.push(...overrides.extraArgs);
+    }
+
+    return args;
+  }
+
+  async launch(overrides = {}) {
+    const args = this.buildLaunchArgs(overrides);
+
     const headless =
       overrides.headless !== undefined ? overrides.headless : this.config.browser.headless;
 
-    this.browser = await puppeteer.launch({
+    const launchOptions = {
       headless,
       args,
       ...overrides.launchOptions,
-    });
+    };
+
+    if (overrides.captchaFriendly) {
+      launchOptions.ignoreDefaultArgs = [
+        ...(Array.isArray(launchOptions.ignoreDefaultArgs)
+          ? launchOptions.ignoreDefaultArgs
+          : launchOptions.ignoreDefaultArgs
+            ? [launchOptions.ignoreDefaultArgs]
+            : []),
+        '--enable-automation',
+      ];
+    }
+
+    this.browser = await puppeteer.launch(launchOptions);
 
     logger.info(`Browser launched (headless=${headless})`);
     return this.browser;

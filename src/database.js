@@ -71,10 +71,29 @@ const activityLogSchema = new mongoose.Schema({
 
 activityLogSchema.index({ timestamp: -1 });
 
+const healthCheckRunSchema = new mongoose.Schema({
+  startedAt: { type: Date, required: true },
+  completedAt: { type: Date, default: Date.now },
+  stoppedEarly: { type: Boolean, default: false },
+  keyword: { type: String },
+  summary: {
+    alive: { type: Number, default: 0 },
+    partial: { type: Number, default: 0 },
+    suspended: { type: Number, default: 0 },
+    dead: { type: Number, default: 0 },
+    total: { type: Number, default: 0 },
+  },
+  results: { type: mongoose.Schema.Types.Mixed, default: [] },
+  reportText: { type: String },
+});
+
+healthCheckRunSchema.index({ completedAt: -1 });
+
 const InteractedTweet = mongoose.model('InteractedTweet', interactedTweetSchema);
 const FollowedUser = mongoose.model('FollowedUser', followedUserSchema);
 const DailyStats = mongoose.model('DailyStats', dailyStatsSchema);
 const ActivityLog = mongoose.model('ActivityLog', activityLogSchema);
+const HealthCheckRun = mongoose.model('HealthCheckRun', healthCheckRunSchema);
 
 const STAT_FIELD = {
   like: 'likes',
@@ -315,6 +334,32 @@ class Database {
 
   async getRecentActivities(limit = 50) {
     return ActivityLog.find().sort({ timestamp: -1 }).limit(limit);
+  }
+
+  async saveHealthCheckRun(payload) {
+    const doc = new HealthCheckRun({
+      startedAt: payload.startedAt ? new Date(payload.startedAt) : new Date(),
+      completedAt: payload.completedAt ? new Date(payload.completedAt) : new Date(),
+      stoppedEarly: !!payload.stoppedEarly,
+      keyword: payload.keyword || null,
+      summary: payload.summary || {},
+      results: payload.results || [],
+      reportText: payload.reportText || '',
+    });
+    await doc.save();
+    return doc;
+  }
+
+  async getLatestHealthCheckRun() {
+    return HealthCheckRun.findOne().sort({ completedAt: -1 }).lean();
+  }
+
+  async getHealthCheckHistory(limit = 10) {
+    return HealthCheckRun.find()
+      .sort({ completedAt: -1 })
+      .limit(limit)
+      .select('startedAt completedAt stoppedEarly keyword summary reportText')
+      .lean();
   }
 
   async getTodayInteractionCount(accountName) {

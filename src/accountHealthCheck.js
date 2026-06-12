@@ -27,6 +27,8 @@ class AccountHealthChecker {
     this.config = config;
     this.db = database;
     this.onProgress = options.onProgress || (() => {});
+    this.shouldStop = options.shouldStop || (() => false);
+    this.onBrowserCreated = options.onBrowserCreated || (() => {});
     this.accountsDir = options.accountsDir || path.join(process.cwd(), 'accounts');
   }
 
@@ -206,11 +208,18 @@ class AccountHealthChecker {
     };
 
     const browserManager = new BrowserManager(this.config);
+    this.onBrowserCreated(browserManager);
     const authManager = new AuthManager(this.accountsDir, this.config.baseUrl);
     const ai = new AIService(this.config);
     const bot = new EngagementBot(browserManager, authManager, ai, this.db, this.config);
 
     try {
+      if (this.shouldStop()) {
+        result.status = 'stopped';
+        result.error = 'Stopped by user';
+        return result;
+      }
+
       await browserManager.launch();
       const page = await browserManager.newPage();
 
@@ -346,10 +355,18 @@ class AccountHealthChecker {
   async runAll(accountNames) {
     const results = [];
     for (const name of accountNames) {
+      if (this.shouldStop()) {
+        logger.info('Health check stopped before next account');
+        break;
+      }
       logger.info(`Health check starting: ${name}`);
       const one = await this.runOneAccount(name);
       results.push(one);
       this.onProgress({ type: 'account', result: one, results: [...results] });
+      if (this.shouldStop()) {
+        logger.info('Health check stopped after current account');
+        break;
+      }
     }
     return results;
   }

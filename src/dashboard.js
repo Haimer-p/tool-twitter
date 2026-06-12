@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs').promises;
 const { CONFIG_PATH, CONFIGS_DIR, listConfigFiles, resolveConfigPath } = require('./accountConfig');
 const { SCREENSHOT_DIR } = require('./accountHealthCheck');
+const { loadHealthCheckReport, LATEST_TXT } = require('./healthCheckReport');
 const { SCREENSHOT_DIR: APPEAL_SCREENSHOT_DIR } = require('./accountAppeal');
 const logger = require('./logger');
 
@@ -24,9 +25,14 @@ class Dashboard {
     };
     this.healthCheckState = {
       running: false,
+      stopping: false,
+      stoppedEarly: false,
       results: [],
       startedAt: null,
       completedAt: null,
+      reportText: null,
+      summary: null,
+      savedAt: null,
     };
     this.appealState = {
       running: false,
@@ -85,6 +91,7 @@ class Dashboard {
       running,
       stopping,
       healthCheckRunning: this.healthCheckState?.running || false,
+      healthCheckStopping: this.healthCheckState?.stopping || false,
       appealRunning: this.appealState?.running || false,
       appealWaitingCaptcha: this.appealState?.waitingCaptcha || false,
       activeConfigFile: this.botState?.configFile || 'accounts.config.json',
@@ -195,6 +202,32 @@ class Dashboard {
       res.json(this.healthCheckState);
     });
 
+    this.app.get('/api/health/report', auth, async (req, res) => {
+      try {
+        const fromFile = await loadHealthCheckReport();
+        const state = this.healthCheckState?.results?.length
+          ? this.healthCheckState
+          : fromFile || this.healthCheckState;
+        res.json({
+          state,
+          reportText: state.reportText || '',
+          reportFile: path.relative(process.cwd(), LATEST_TXT).replace(/\\/g, '/'),
+        });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    this.app.get('/api/health/history', auth, async (req, res) => {
+      try {
+        const limit = parseInt(req.query.limit, 10) || 10;
+        const runs = await this.db.getHealthCheckHistory(limit);
+        res.json({ runs });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     this.app.get('/api/health/screenshots/:accountName', auth, async (req, res) => {
       const accountName = String(req.params.accountName || '').replace(/[^a-zA-Z0-9_-]/g, '');
       if (!accountName) {
@@ -231,6 +264,12 @@ class Dashboard {
       this.io.emit('control', { action: 'health_check', data: req.body });
       this.onControl('health_check', req.body);
       res.json({ success: true, message: 'Health check started' });
+    });
+
+    this.app.post('/api/control/health-check-stop', auth, (req, res) => {
+      this.io.emit('control', { action: 'health_check_stop' });
+      this.onControl('health_check_stop');
+      res.json({ success: true, message: 'Health check stop sent' });
     });
 
     this.app.get('/api/appeal/results', auth, (req, res) => {
@@ -281,6 +320,38 @@ class Dashboard {
         this.clients.delete(socket);
       });
     });
+  }
+
+  async loadPersistedHealthCheck() {
+    try {
+      const fromFile = await loadHealthCheckReport();
+      if (fromFile?.results?.length) {
+        this.healthCheckState = {
+          ...fromFile,
+          running: false,
+          stopping: false,
+        };
+        logger.info('Loaded last health check report from logs/health-check/latest.json');
+        return;
+      }
+      const fromDb = await this.db.getLatestHealthCheckRun();
+      if (fromDb?.results?.length) {
+        this.healthCheckState = {
+          running: false,
+          stopping: false,
+          stoppedEarly: !!fromDb.stoppedEarly,
+          results: fromDb.results,
+          startedAt: fromDb.startedAt,
+          completedAt: fromDb.completedAt,
+          summary: fromDb.summary,
+          reportText: fromDb.reportText,
+          savedAt: fromDb.completedAt,
+        };
+        logger.info('Loaded last health check report from database');
+      }
+    } catch (error) {
+      logger.warn(`Could not load health check report: ${error.message}`);
+    }
   }
 
   async sendStatsUpdate() {

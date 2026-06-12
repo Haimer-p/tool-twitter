@@ -70,7 +70,6 @@ async function main() {
   const db = new Database(config.database.mongodbUri);
   await db.connect();
 
-  const authManager = new AuthManager(accountsDir, config.baseUrl);
   const runner = new AccountAppealRunner(config, {
     accountsDir,
     mode: 'terminal',

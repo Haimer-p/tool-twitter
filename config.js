@@ -93,13 +93,21 @@ module.exports = {
   },
 
   appeal: {
+    formUrl:
+      process.env.APPEAL_FORM_URL ||
+      'https://help.x.com/en/forms/account-access/appeals',
     language: process.env.APPEAL_LANGUAGE || 'en',
     manualCaptchaTimeoutMs: parseInt(process.env.APPEAL_CAPTCHA_TIMEOUT_MS || '600000', 10),
     appealMinLength: parseInt(process.env.APPEAL_MIN_LENGTH || '150', 10),
     appealMaxLength: parseInt(process.env.APPEAL_MAX_LENGTH || '500', 10),
     delays: {
       betweenSteps: { min: 2000, max: 4000 },
-      typing: { min: 40, max: 100 },
+      typing: {
+        min: parseInt(process.env.APPEAL_TYPING_MIN_MS || '80', 10),
+        max: parseInt(process.env.APPEAL_TYPING_MAX_MS || '200', 10),
+      },
+      typingPauseEvery: { min: 25, max: 45 },
+      typingPauseDuration: { min: 400, max: 1200 },
     },
   },
 

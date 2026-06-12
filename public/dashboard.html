@@ -105,6 +105,10 @@
     .health-meta { font-size: 11px; color: #999; margin-top: 8px; }
     .btn-health { background: #8e44ad; color: white; }
     .health-status-text { font-size: 14px; color: #666; align-self: center; }
+    .health-report-box { margin-top: 16px; padding: 14px; background: #1e1e1e; border-radius: 10px; color: #d4d4d4; }
+    .health-report-box h4 { color: #eee; margin-bottom: 10px; font-size: 14px; }
+    .health-report-pre { margin: 0; font-family: Consolas, Monaco, monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; max-height: 360px; overflow: auto; }
+    .health-report-meta { margin-top: 8px; font-size: 11px; color: #999; }
   </style>
 </head>
 <body>
@@ -135,11 +139,17 @@
       <h3>Kiểm tra tài khoản (Health Check)</h3>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
         <button class="btn btn-health" id="healthCheckBtn" onclick="runHealthCheck()">Chạy health check</button>
+        <button class="btn btn-stop" id="healthCheckStopBtn" onclick="stopHealthCheck()" disabled>Dừng health check</button>
         <span class="health-status-text" id="healthStatusText">Chưa chạy</span>
       </div>
       <div class="health-summary" id="healthSummary"></div>
       <div class="health-grid" id="healthGrid">
         <div style="color:#999;padding:12px">Bấm "Chạy health check" để kiểm tra login, search, like, retweet, reply cho tất cả account.</div>
+      </div>
+      <div class="health-report-box" id="healthReportBox" style="display:none">
+        <h4>Báo cáo lần check gần nhất</h4>
+        <pre class="health-report-pre" id="healthReportText"></pre>
+        <div class="health-report-meta" id="healthReportMeta"></div>
       </div>
     </div>
 
@@ -242,20 +252,31 @@
     function renderHealthState(state) {
       const results = state?.results || [];
       const running = state?.running;
+      const stopping = state?.stopping;
       const statusEl = document.getElementById('healthStatusText');
       const btn = document.getElementById('healthCheckBtn');
+      const stopBtn = document.getElementById('healthCheckStopBtn');
       const summary = document.getElementById('healthSummary');
       const grid = document.getElementById('healthGrid');
 
-      if (running) {
+      if (stopping) {
+        statusEl.textContent = 'Đang dừng...';
+        if (btn) btn.disabled = true;
+        if (stopBtn) stopBtn.disabled = true;
+      } else if (running) {
         statusEl.textContent = 'Đang chạy...';
-        btn.disabled = true;
+        if (btn) btn.disabled = true;
+        if (stopBtn) stopBtn.disabled = false;
       } else if (state?.completedAt) {
-        statusEl.textContent = 'Hoàn tất: ' + formatTime(state.completedAt);
-        btn.disabled = false;
+        statusEl.textContent = state.stoppedEarly
+          ? 'Đã dừng: ' + formatTime(state.completedAt)
+          : 'Hoàn tất: ' + formatTime(state.completedAt);
+        if (btn) btn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
       } else {
         statusEl.textContent = 'Chưa chạy';
-        btn.disabled = false;
+        if (btn) btn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
       }
 
       const alive = results.filter((r) => r.status === 'alive').length;
@@ -320,6 +341,27 @@
 
       attachHealthScreenshots();
       refreshAppealAccountPick(results);
+      renderHealthReport(state);
+    }
+
+    function renderHealthReport(state) {
+      const box = document.getElementById('healthReportBox');
+      const pre = document.getElementById('healthReportText');
+      const meta = document.getElementById('healthReportMeta');
+      if (!box || !pre) return;
+
+      if (state?.reportText) {
+        box.style.display = 'block';
+        pre.textContent = state.reportText;
+        const saved = state.savedAt || state.completedAt;
+        meta.textContent = saved
+          ? `Lưu: ${formatTime(saved)} · File: logs/health-check/latest-report.txt · DB: MongoDB`
+          : 'File: logs/health-check/latest-report.txt';
+      } else if (!state?.running && !(state?.results || []).length) {
+        box.style.display = 'none';
+        pre.textContent = '';
+        if (meta) meta.textContent = '';
+      }
     }
 
     function refreshAppealAccountPick(healthResults) {
@@ -454,10 +496,17 @@
 
     async function loadHealthResults() {
       try {
-        const state = await apiFetch('/api/health/results');
-        renderHealthState(state);
+        const data = await apiFetch('/api/health/report');
+        renderHealthState(data.state || data);
+        renderHealthReport(data.state || data);
       } catch {
-        /* ignore */
+        try {
+          const state = await apiFetch('/api/health/results');
+          renderHealthState(state);
+          renderHealthReport(state);
+        } catch {
+          /* ignore */
+        }
       }
     }
 
@@ -473,6 +522,20 @@
       } catch (e) {
         alert('Không gửi được lệnh health check: ' + e.message);
         document.getElementById('healthCheckBtn').disabled = false;
+      }
+    }
+
+    async function stopHealthCheck() {
+      try {
+        document.getElementById('healthStatusText').textContent = 'Đang dừng...';
+        document.getElementById('healthCheckStopBtn').disabled = true;
+        await fetch('/api/control/health-check-stop', {
+          method: 'POST',
+          headers: { Authorization: getAuthHeader(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+      } catch (e) {
+        alert('Không gửi được lệnh dừng: ' + e.message);
       }
     }
 
