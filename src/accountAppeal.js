@@ -193,35 +193,57 @@ class AccountAppealRunner {
 
   async findDescriptionTextarea(page) {
     const handle = await page.evaluateHandle(() => {
-      const hasDescriptionLabel = (el) =>
-        (el.textContent || '').toLowerCase().includes('description of the problem');
+      const bodyText = (document.body?.innerText || '').toLowerCase();
 
+      // 1) Try matching label "description of the problem" → for="textareaId"
       for (const label of document.querySelectorAll('label')) {
-        if (!hasDescriptionLabel(label)) continue;
-        const id = label.getAttribute('for');
-        if (id) {
-          const target = document.getElementById(id);
-          if (target?.tagName === 'TEXTAREA') return target;
+        const labelText = (label.textContent || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        if (
+          labelText.includes('description of the problem') ||
+          labelText.includes('tell us more') ||
+          labelText.includes('additional details') ||
+          labelText.includes('describe your issue') ||
+          labelText.includes('explain the issue')
+        ) {
+          const id = label.getAttribute('for');
+          if (id) {
+            const target = document.getElementById(id);
+            if (target?.tagName === 'TEXTAREA' && !(target.value || '').trim()) return target;
+            if (target?.tagName === 'TEXTAREA') return target;
+          }
+          const parent = label.closest('div, fieldset, section, form');
+          const ta = parent?.querySelector('textarea:not([disabled]):not([readonly])');
+          if (ta) return ta;
         }
-        const parent = label.closest('div, fieldset, section, form');
-        const ta = parent?.querySelector('textarea');
+      }
+
+      // 2) Find any div/section that contains description-related text, then look for textarea inside
+      const keywords = ['description of the problem', 'tell us more', 'additional details', 'describe', 'explain'];
+      for (const el of document.querySelectorAll('div, section, fieldset')) {
+        const elText = (el.textContent || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        if (!keywords.some((k) => elText.includes(k))) continue;
+        const ta = el.querySelector('textarea:not([disabled]):not([readonly])');
         if (ta) return ta;
       }
 
-      for (const el of document.querySelectorAll('*')) {
-        if (!hasDescriptionLabel(el)) continue;
-        let node = el;
-        for (let i = 0; i < 6 && node; i++) {
-          const ta = node.querySelector?.('textarea');
-          if (ta) return ta;
-          node = node.parentElement;
+      // 3) If the page says "description of the problem" anywhere, still try broader search
+      if (bodyText.includes('description of the problem')) {
+        for (const ta of document.querySelectorAll('textarea')) {
+          if ((ta.value || '').trim().length === 0) return ta;
         }
       }
 
-      const textareas = [...document.querySelectorAll('textarea')];
-      if (!textareas.length) return null;
+      // 4) Fallback: find the largest empty visible textarea (most likely the description field)
+      const textareas = [...document.querySelectorAll('textarea:not([disabled]):not([readonly])')];
+      if (textareas.length === 0) return null;
+
+      // Prefer empty ones
       const empty = textareas.find((ta) => !(ta.value || '').trim());
-      return empty || textareas[textareas.length - 1];
+      if (empty) return empty;
+
+      // Or the one with smallest value (likely empty-ish)
+      textareas.sort((a, b) => (a.value || '').length - (b.value || '').length);
+      return textareas[0];
     });
 
     const element = handle.asElement();
@@ -321,28 +343,68 @@ class AccountAppealRunner {
   async submitAppealForm(page, accountName) {
     const clicked = await page
       .evaluate(() => {
-        const candidates = [
-          ...document.querySelectorAll('button'),
-          ...document.querySelectorAll('input[type="submit"]'),
-        ];
-        for (const btn of candidates) {
-          const label = (btn.textContent || btn.value || '').trim().toLowerCase();
-          if (label === 'submit') {
-            btn.scrollIntoView({ block: 'center' });
+        // Helper: check if element is visible
+        const isVisible = (el) => {
+          if (!el || !el.offsetParent) return false;
+          const rect = el.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        };
+
+        // 1) Find by type="submit" (most reliable)
+        for (const btn of document.querySelectorAll('button[type="submit"], input[type="submit"]')) {
+          if (isVisible(btn)) {
+            btn.scrollIntoView({ block: 'center', behavior: 'instant' });
             btn.click();
             return true;
           }
         }
+
+        // 2) Find by text matching (flexible)
+        const labels = ['submit', 'send', 'submit appeal', 'file appeal', 'continue', 'next'];
+        const candidates = [
+          ...document.querySelectorAll('button'),
+          ...document.querySelectorAll('input[type="submit"]'),
+          ...document.querySelectorAll('a[role="button"]'),
+          ...document.querySelectorAll('div[role="button"]'),
+        ];
+        for (const btn of candidates) {
+          if (!isVisible(btn)) continue;
+          const text = (btn.textContent || btn.value || '').trim().toLowerCase();
+          if (labels.includes(text) || labels.some((l) => text.includes(l))) {
+            btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+            // Force click via dispatchEvent for stubborn elements
+            btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            return true;
+          }
+        }
+
+        // 3) Last resort: try any visible button inside the form
+        for (const form of document.querySelectorAll('form')) {
+          const btns = form.querySelectorAll('button, input[type="submit"], input[type="button"]');
+          for (const btn of btns) {
+            if (isVisible(btn)) {
+              btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+              btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+              return true;
+            }
+          }
+        }
+
         return false;
       })
       .catch(() => false);
 
     if (!clicked) {
       logger.error(`[${accountName}] Submit button not found on help.x.com form`);
+      // Take screenshot for debugging
+      try {
+        await page.screenshot({ path: require('path').join(process.cwd(), 'logs', 'appeal', `${accountName}-submit-fail.png`), fullPage: false });
+      } catch {}
       return false;
     }
 
-    await sleep(randomMs(2000, 4000));
+    // Wait for navigation/redirect after submit
+    await sleep(randomMs(3000, 6000));
     return true;
   }
 
@@ -538,7 +600,7 @@ class AccountAppealRunner {
       return result;
     } finally {
       result.durationMs = Date.now() - startedAt;
-      await browserManager.close().catch(() => null);
+      // Không tự động đóng browser — user tự đóng khi xong
     }
   }
 
