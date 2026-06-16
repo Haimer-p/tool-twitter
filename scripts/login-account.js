@@ -12,6 +12,7 @@ const readline = require('readline');
 const config = require('../config');
 const BrowserManager = require('../src/browser');
 const AuthManager = require('../src/auth');
+const Database = require('../src/database');
 const logger = require('../src/logger');
 
 function ask(query) {
@@ -54,25 +55,43 @@ Sau khi đăng nhập xong, thêm vào accounts.config.json:
 `);
 
   const browserManager = new BrowserManager(config);
+  let database = null;
+  if (!process.env.MONGODB_URI) {
+    throw new Error('MONGODB_URI chưa được cấu hình. Không thể sync account lên DB.');
+  }
+  database = new Database(config.database.mongodbUri);
+  await database.connect();
   const authManager = new AuthManager(
     require('path').join(process.cwd(), 'accounts'),
-    config.baseUrl
+    config.baseUrl,
+    database
   );
 
   await browserManager.launch();
   const page = await browserManager.newPage();
+  let keepOpenAfterSuccess = false;
 
   try {
     const ok = await authManager.login(page, accountName);
     if (ok) {
       logger.info(`Hoàn tất! File cookies: accounts/${accountName}.json`);
       console.log('\nBước tiếp theo: mở accounts.config.json và thêm block account ở trên.\n');
+      console.log('Đăng nhập thành công. Browser sẽ được giữ mở, tự đóng khi bạn tắt cửa sổ.\n');
+      keepOpenAfterSuccess = true;
+      await new Promise((resolve) => {
+        browserManager.browser?.once('disconnected', resolve);
+      });
     } else {
       logger.error('Đăng nhập thất bại');
       process.exit(1);
     }
   } finally {
-    await browserManager.close();
+    if (!keepOpenAfterSuccess) {
+      await browserManager.close();
+    }
+    if (database?.connected) {
+      await database.disconnect();
+    }
   }
 }
 

@@ -93,7 +93,7 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
 
       {/* Mobile drawer */}
       <aside
-        className={`lg:hidden fixed top-0 left-0 z-50 h-full w-72 max-w-[85vw] border-r border-surface-border bg-surface-card p-4 flex flex-col gap-4 transform transition-transform duration-200 ${
+        className={`lg:hidden fixed top-0 left-0 z-50 h-full w-[80vw] max-w-xs border-r border-surface-border bg-surface-card p-4 flex flex-col gap-4 transform transition-transform duration-200 ${
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
       >

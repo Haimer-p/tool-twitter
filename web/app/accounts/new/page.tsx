@@ -25,23 +25,23 @@ export default function NewAccountPage() {
 
   return (
     <div className="max-w-xl space-y-4">
-        <h1 className="text-2xl font-bold">Thêm Account</h1>
-        <div>
-          <label className="label">Tên account</label>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div>
-          <label className="label">Cookies JSON (paste từ accounts/*.json)</label>
-          <textarea
-            className="input min-h-[200px] font-mono text-xs"
-            value={cookiesJson}
-            onChange={(e) => setCookiesJson(e.target.value)}
-          />
-        </div>
-        {err && <p className="text-accent-red text-sm">{err}</p>}
-        <button className="btn btn-primary" onClick={submit}>
-          Lưu
-        </button>
+      <h1 className="text-xl sm:text-2xl font-bold">Thêm Account</h1>
+      <div>
+        <label className="label">Tên account</label>
+        <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
       </div>
+      <div>
+        <label className="label">Cookies JSON (paste từ accounts/*.json)</label>
+        <textarea
+          className="input min-h-[180px] sm:min-h-[200px] font-mono text-xs"
+          value={cookiesJson}
+          onChange={(e) => setCookiesJson(e.target.value)}
+        />
+      </div>
+      {err && <p className="text-accent-red text-sm">{err}</p>}
+      <button className="btn btn-primary w-full sm:w-auto justify-center" onClick={submit}>
+        Lưu
+      </button>
+    </div>
   );
 }

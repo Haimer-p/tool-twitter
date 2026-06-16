@@ -69,12 +69,21 @@ export async function POST(request) {
     }
 
     const db = await getDb();
-    let slug = campaignData.slug;
-    let n = 1;
-    while (await db.getCampaignBySlug(slug)) {
-      slug = `${campaignData.slug}-${n++}`;
+    const all = await db.listCampaigns();
+    const normalizedSymbol = String(meta.symbol || '').toUpperCase();
+    const normalizedMint = String(meta.mintAddress || '').trim();
+    const normalizedPair = String(meta.pairAddress || '').trim();
+
+    const existing =
+      all.find((c) => normalizedMint && c.mintAddress && c.mintAddress === normalizedMint) ||
+      all.find((c) => normalizedPair && c.pairAddress && c.pairAddress === normalizedPair) ||
+      (await db.getCampaignBySlug(campaignData.slug)) ||
+      all.find((c) => String(c.symbol || '').toUpperCase() === normalizedSymbol);
+
+    if (existing?._id) {
+      const campaign = await db.updateCampaign(existing._id, campaignData);
+      return json({ meta, generated, campaign, updated: true });
     }
-    campaignData.slug = slug;
 
     const campaign = await db.createCampaign(campaignData);
     return json({ meta, generated, campaign }, 201);

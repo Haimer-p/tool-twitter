@@ -100,9 +100,9 @@ function HealthContent() {
             </span>
           </p>
         </div>
-        <button type="button" className="btn btn-ghost" onClick={() => reload()}>
+        <button type="button" className="btn btn-ghost w-full sm:w-auto justify-center" onClick={() => reload()}>
           <RefreshCw className="w-4 h-4" />
-          <span className="hidden sm:inline">Refresh</span>
+          <span>Refresh</span>
         </button>
       </div>
 
@@ -112,7 +112,7 @@ function HealthContent() {
           {accounts.map((a) => (
             <label
               key={a.name}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm cursor-pointer ${
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm cursor-pointer max-w-full ${
                 selected.includes(a.name)
                   ? 'border-accent bg-accent/10'
                   : 'border-surface-border'
@@ -123,7 +123,7 @@ function HealthContent() {
                 checked={selected.includes(a.name)}
                 onChange={() => toggle(a.name)}
               />
-              {a.name}
+              <span className="truncate max-w-[120px] sm:max-w-none">{a.name}</span>
               {statusBadge(a.lastHealthStatus)}
             </label>
           ))}

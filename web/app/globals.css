@@ -51,9 +51,29 @@ body {
   @apply flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3;
 }
 
-/* Responsive table fallback */
+.page-actions {
+  @apply flex flex-wrap gap-2 w-full sm:w-auto;
+}
+
+.form-grid-2 {
+  @apply grid grid-cols-1 sm:grid-cols-2 gap-4;
+}
+
+.table-wrap {
+  @apply overflow-x-auto;
+}
+
+.table-base {
+  @apply w-full text-sm min-w-[640px];
+}
+
+/* Responsive spacing */
 @media (max-width: 767px) {
   .card {
     @apply p-4;
+  }
+
+  .btn {
+    @apply min-h-[40px];
   }
 }

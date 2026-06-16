@@ -103,7 +103,7 @@ export default function NewCampaignPage() {
               {accounts.map((a) => (
                 <label
                   key={a.name}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-pointer text-sm ${
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-pointer text-sm max-w-full ${
                     selected.includes(a.name)
                       ? 'border-accent bg-accent/10'
                       : 'border-surface-border'
@@ -114,7 +114,7 @@ export default function NewCampaignPage() {
                     checked={selected.includes(a.name)}
                     onChange={() => toggle(a.name)}
                   />
-                  {a.name}
+                  <span className="truncate max-w-[120px] sm:max-w-none">{a.name}</span>
                   {a.lastHealthStatus === 'alive' && (
                     <span className="badge badge-alive">alive</span>
                   )}
@@ -123,7 +123,7 @@ export default function NewCampaignPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="form-grid-2">
             <div>
               <label className="label">keywordsPerRun</label>
               <input
@@ -155,16 +155,16 @@ export default function NewCampaignPage() {
 
           {err && <p className="text-accent-red text-sm">{err}</p>}
 
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <button
-              className="btn btn-ghost"
+              className="btn btn-ghost w-full sm:w-auto justify-center"
               disabled={loading || !dexUrl || !selected.length}
               onClick={() => generate(false)}
             >
               Preview
             </button>
             <button
-              className="btn btn-primary"
+              className="btn btn-primary w-full sm:w-auto justify-center"
               disabled={loading || !dexUrl || !selected.length}
               onClick={() => generate(true)}
             >

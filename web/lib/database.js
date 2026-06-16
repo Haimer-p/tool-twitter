@@ -146,7 +146,7 @@ tokenCampaignSchema.index({ status: 1, updatedAt: -1 });
 const botCommandSchema = new mongoose.Schema({
   action: {
     type: String,
-    enum: ['start', 'stop', 'health_check', 'appeal', 'generate_keywords'],
+    enum: ['start', 'stop', 'health_check', 'login_account', 'appeal', 'generate_keywords'],
     required: true,
   },
   campaignId: { type: mongoose.Schema.Types.ObjectId, ref: 'TokenCampaign' },

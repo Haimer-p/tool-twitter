@@ -41,33 +41,38 @@ export default function EditCampaignPage() {
 
   return (
     <div className="max-w-3xl space-y-4">
-        <h1 className="text-2xl font-bold">
-          Edit: ${String(campaign.symbol)} — {String(campaign.name)}
-        </h1>
-        <div className="card space-y-3 text-sm">
-          <div>
-            <span className="text-surface-muted">Dex: </span>
-            <a href={String(campaign.dexUrl)} className="text-accent" target="_blank" rel="noreferrer">
-              {String(campaign.dexUrl)}
-            </a>
-          </div>
-          <div>
-            <span className="text-surface-muted">Accounts: </span>
-            {(campaign.accounts as { name: string }[])?.map((a) => a.name).join(', ')}
-          </div>
+      <h1 className="text-xl sm:text-2xl font-bold break-words">
+        Edit: ${String(campaign.symbol)} — {String(campaign.name)}
+      </h1>
+      <div className="card space-y-3 text-sm">
+        <div className="break-words">
+          <span className="text-surface-muted">Dex: </span>
+          <a
+            href={String(campaign.dexUrl)}
+            className="text-accent break-all"
+            target="_blank"
+            rel="noreferrer"
+          >
+            {String(campaign.dexUrl)}
+          </a>
         </div>
-        <div>
-          <label className="label">Keywords (account đầu tiên — mỗi dòng 1 keyword)</label>
-          <textarea
-            className="input min-h-[300px] font-mono text-xs"
-            value={keywordsText}
-            onChange={(e) => setKeywordsText(e.target.value)}
-          />
+        <div className="break-words">
+          <span className="text-surface-muted">Accounts: </span>
+          {(campaign.accounts as { name: string }[])?.map((a) => a.name).join(', ')}
         </div>
-        {err && <p className="text-accent-red text-sm">{err}</p>}
-        <button className="btn btn-primary" onClick={save}>
-          Lưu & Activate
-        </button>
       </div>
+      <div>
+        <label className="label">Keywords (account đầu tiên — mỗi dòng 1 keyword)</label>
+        <textarea
+          className="input min-h-[260px] sm:min-h-[300px] font-mono text-xs"
+          value={keywordsText}
+          onChange={(e) => setKeywordsText(e.target.value)}
+        />
+      </div>
+      {err && <p className="text-accent-red text-sm">{err}</p>}
+      <button className="btn btn-primary w-full sm:w-auto justify-center" onClick={save}>
+        Lưu & Activate
+      </button>
+    </div>
   );
 }

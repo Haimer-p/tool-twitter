@@ -51,6 +51,8 @@ let bot = null;
 let botRunning = false;
 let stopRequested = false;
 let heartbeatTimer = null;
+let authManager = null;
+let manualLoginSession = null;
 
 function applyRunProfile(accounts, runProfile) {
   const profile = RUN_PROFILES[runProfile] || RUN_PROFILES.vua;
@@ -136,14 +138,17 @@ async function handleStart(cmd) {
 }
 
 async function handleStop() {
-  if (!botRunning) {
+  if (!botRunning && !manualLoginSession) {
     logger.warn('Stop ignored: bot is not running');
     return;
   }
-  stopRequested = true;
-  bot.isRunning = false;
-  await database.upsertBotRuntime(WORKER_ID, { stopping: true });
-  logger.info('Stop signal received — finishing current actions...');
+  if (botRunning) {
+    stopRequested = true;
+    bot.isRunning = false;
+    await database.upsertBotRuntime(WORKER_ID, { stopping: true });
+    logger.info('Stop signal received — finishing current actions...');
+  }
+  await closeManualLoginSession('stop');
 }
 
 async function handleHealthCheck(cmd) {
@@ -165,6 +170,61 @@ async function handleHealthCheck(cmd) {
   }, {}) };
 }
 
+async function closeManualLoginSession(reason = 'manual') {
+  if (!manualLoginSession) return;
+  const { browserManager, accountName } = manualLoginSession;
+  manualLoginSession = null;
+  try {
+    await browserManager.close();
+    logger.info(`Manual login browser closed (${accountName}, reason=${reason})`);
+  } catch (error) {
+    logger.warn(`Close manual login browser failed: ${error.message}`);
+  }
+}
+
+async function handleLoginAccount(cmd) {
+  const accountName = cmd.accountNames?.[0];
+  if (!accountName) throw new Error('accountNames[0] required for login_account');
+  if (!authManager) throw new Error('Auth manager not initialized');
+
+  if (manualLoginSession?.accountName === accountName && manualLoginSession.page?.isClosed?.() === false) {
+    try {
+      await manualLoginSession.page.bringToFront();
+    } catch {
+      /* no-op */
+    }
+    return { ok: true, alreadyOpen: true, accountName };
+  }
+
+  await closeManualLoginSession('replace');
+
+  const browserManager = new BrowserManager(config);
+  await browserManager.launch({ headless: false, captchaFriendly: true });
+  const page = await browserManager.newPage();
+
+  let disconnected = false;
+  browserManager.browser?.once('disconnected', () => {
+    disconnected = true;
+    if (manualLoginSession?.browserManager === browserManager) {
+      manualLoginSession = null;
+      logger.info(`Manual login browser disconnected (${accountName})`);
+    }
+  });
+
+  const loggedIn = await authManager.login(page, accountName, {
+    mode: 'dashboard',
+    manualTimeoutMs: 15 * 60 * 1000,
+  });
+
+  if (!loggedIn || disconnected) {
+    await browserManager.close().catch(() => {});
+    throw new Error(`Login failed or timed out for ${accountName}`);
+  }
+
+  manualLoginSession = { browserManager, page, accountName };
+  return { ok: true, accountName, keptOpen: true };
+}
+
 async function processCommand(cmd) {
   try {
     if (cmd.action === 'start') {
@@ -177,6 +237,10 @@ async function processCommand(cmd) {
     } else if (cmd.action === 'health_check') {
       if (botRunning) throw new Error('Bot is running — stop it before health check');
       const result = await handleHealthCheck(cmd);
+      await database.finishCommand(cmd._id, result);
+    } else if (cmd.action === 'login_account') {
+      if (botRunning) throw new Error('Bot is running — stop it before login_account');
+      const result = await handleLoginAccount(cmd);
       await database.finishCommand(cmd._id, result);
     } else {
       await database.finishCommand(cmd._id, null, `Unknown action: ${cmd.action}`);
@@ -229,7 +293,7 @@ async function main() {
   await database.connect();
 
   const browserManager = new BrowserManager(config);
-  const authManager = new AuthManager(
+  authManager = new AuthManager(
     path.join(process.cwd(), 'accounts'),
     config.baseUrl,
     database
@@ -245,6 +309,7 @@ async function main() {
 
   process.on('SIGINT', async () => {
     clearInterval(heartbeatTimer);
+    await closeManualLoginSession('sigint');
     if (database) await database.disconnect();
     process.exit(0);
   });

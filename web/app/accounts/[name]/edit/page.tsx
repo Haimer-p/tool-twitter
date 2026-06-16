@@ -36,30 +36,30 @@ export default function EditAccountPage() {
 
   return (
     <div className="max-w-xl space-y-4">
-        <h1 className="text-2xl font-bold">Sửa: {name}</h1>
-        <div>
-          <label className="label flex items-center gap-2">
-            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-            Enabled
-          </label>
-        </div>
-        <div>
-          <label className="label">Ghi chú</label>
-          <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </div>
-        <div>
-          <label className="label">Cookies mới (optional, paste JSON)</label>
-          <textarea
-            className="input min-h-[160px] font-mono text-xs"
-            value={cookiesJson}
-            onChange={(e) => setCookiesJson(e.target.value)}
-            placeholder="Để trống nếu không đổi cookies"
-          />
-        </div>
-        {err && <p className="text-accent-red text-sm">{err}</p>}
-        <button className="btn btn-primary" onClick={save}>
-          Lưu
-        </button>
+      <h1 className="text-xl sm:text-2xl font-bold break-words">Sửa: {name}</h1>
+      <div>
+        <label className="label flex items-center gap-2">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          Enabled
+        </label>
       </div>
+      <div>
+        <label className="label">Ghi chú</label>
+        <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </div>
+      <div>
+        <label className="label">Cookies mới (optional, paste JSON)</label>
+        <textarea
+          className="input min-h-[150px] sm:min-h-[160px] font-mono text-xs"
+          value={cookiesJson}
+          onChange={(e) => setCookiesJson(e.target.value)}
+          placeholder="Để trống nếu không đổi cookies"
+        />
+      </div>
+      {err && <p className="text-accent-red text-sm">{err}</p>}
+      <button className="btn btn-primary w-full sm:w-auto justify-center" onClick={save}>
+        Lưu
+      </button>
+    </div>
   );
 }

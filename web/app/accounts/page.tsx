@@ -41,19 +41,19 @@ export default function AccountsPage() {
 
   return (
     <div className="space-y-4">
-        <div className="page-header">
-          <h1 className="text-xl sm:text-2xl font-bold">Accounts</h1>
-          <div className="flex gap-2 shrink-0">
-            <Link href="/health" className="btn btn-ghost">
-              Health Check
-            </Link>
-            <Link href="/accounts/new" className="btn btn-primary">
+      <div className="page-header">
+        <h1 className="text-xl sm:text-2xl font-bold">Accounts</h1>
+        <div className="page-actions">
+          <Link href="/health" className="btn btn-ghost w-full sm:w-auto justify-center">
+            Health Check
+          </Link>
+          <Link href="/accounts/new" className="btn btn-primary w-full sm:w-auto justify-center">
             <Plus className="w-4 h-4" />
-            <span className="hidden xs:inline sm:inline">Thêm account</span>
+            <span className="hidden sm:inline">Thêm account</span>
             <span className="sm:hidden">Thêm</span>
-            </Link>
-          </div>
+          </Link>
         </div>
+      </div>
 
         {loading ? (
           <p className="text-surface-muted">Đang tải...</p>
@@ -94,8 +94,8 @@ export default function AccountsPage() {
             </div>
 
             {/* Desktop: table */}
-            <div className="card overflow-x-auto hidden md:block">
-              <table className="w-full text-sm">
+            <div className="card table-wrap hidden md:block">
+              <table className="table-base">
                 <thead>
                   <tr className="text-surface-muted border-b border-surface-border">
                     <th className="text-left py-2 pr-4">Name</th>
