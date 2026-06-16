@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
-const logger = require('./logger');
 const { encryptJson, decryptJson } = require('./crypto');
+
+const logger = {
+  info: (...args) => console.log('[db]', ...args),
+  warn: (...args) => console.warn('[db]', ...args),
+  error: (...args) => console.error('[db]', ...args),
+};
 
 const interactedTweetSchema = new mongoose.Schema({
   tweetId: { type: String, required: true },
@@ -171,15 +176,19 @@ const botRuntimeSchema = new mongoose.Schema({
   stopping: { type: Boolean, default: false },
 }, { timestamps: true });
 
-const InteractedTweet = mongoose.model('InteractedTweet', interactedTweetSchema);
-const FollowedUser = mongoose.model('FollowedUser', followedUserSchema);
-const DailyStats = mongoose.model('DailyStats', dailyStatsSchema);
-const ActivityLog = mongoose.model('ActivityLog', activityLogSchema);
-const HealthCheckRun = mongoose.model('HealthCheckRun', healthCheckRunSchema);
-const Account = mongoose.model('Account', accountSchema);
-const TokenCampaign = mongoose.model('TokenCampaign', tokenCampaignSchema);
-const BotCommand = mongoose.model('BotCommand', botCommandSchema);
-const BotRuntime = mongoose.model('BotRuntime', botRuntimeSchema);
+function getModel(name, schema) {
+  return mongoose.models[name] || mongoose.model(name, schema);
+}
+
+const InteractedTweet = getModel('InteractedTweet', interactedTweetSchema);
+const FollowedUser = getModel('FollowedUser', followedUserSchema);
+const DailyStats = getModel('DailyStats', dailyStatsSchema);
+const ActivityLog = getModel('ActivityLog', activityLogSchema);
+const HealthCheckRun = getModel('HealthCheckRun', healthCheckRunSchema);
+const Account = getModel('Account', accountSchema);
+const TokenCampaign = getModel('TokenCampaign', tokenCampaignSchema);
+const BotCommand = getModel('BotCommand', botCommandSchema);
+const BotRuntime = getModel('BotRuntime', botRuntimeSchema);
 
 const STAT_FIELD = {
   like: 'likes',
@@ -195,6 +204,11 @@ class Database {
   }
 
   async connect() {
+    if (mongoose.connection.readyState === 1) {
+      this.connected = true;
+      return;
+    }
+
     const options = {
       autoSelectFamily: false,
       serverSelectionTimeoutMS: 15000,

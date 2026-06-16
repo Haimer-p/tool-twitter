@@ -14,7 +14,9 @@
     "test:ai": "node scripts/test-ai.js",
     "login": "node scripts/login-account.js",
     "health-check": "node scripts/health-check.js",
-    "appeal": "node scripts/appeal-account.js"
+    "appeal": "node scripts/appeal-account.js",
+    "worker": "node src/worker.js",
+    "migrate-db": "node scripts/migrate-to-db.js"
   },
   "keywords": [
     "twitter",

@@ -17,6 +17,7 @@ const { AccountHealthChecker, listCookieAccounts } = require('./accountHealthChe
 const { AccountAppealRunner } = require('./accountAppeal');
 const {
   loadAccountConfig,
+  loadCampaignFromDb,
   filterAccountsByName,
   listConfigFiles,
   resolveConfigPath,
@@ -214,7 +215,7 @@ async function runBot(profiles, maxConcurrent) {
   }
 }
 
-function handleControl(action, data) {
+async function handleControl(action, data) {
   if (!bot) return;
 
   if (action === 'stop') {
@@ -234,16 +235,26 @@ function handleControl(action, data) {
   if (action === 'start') {
     const nextConfigFile = data?.configFile || runtimeState.configFile;
     const nextProfile = data?.runProfile || runtimeState.runProfile || 'vua';
+    const campaignId = data?.campaignId;
 
-    const loaded = loadAccountConfig(config, { configFile: nextConfigFile });
+    let loaded = null;
+    if (campaignId && database?.connected) {
+      loaded = await loadCampaignFromDb(database, campaignId, config);
+    }
     if (!loaded) {
-      logger.warn(`Start ignored: config not found (${nextConfigFile})`);
+      loaded = loadAccountConfig(config, { configFile: nextConfigFile });
+    }
+    if (!loaded) {
+      logger.warn(`Start ignored: config/campaign not found`);
       return;
     }
 
     runtimeState = {
       ...runtimeState,
-      configFile: path.relative(process.cwd(), loaded.sourcePath).replace(/\\/g, '/'),
+      configFile: loaded.sourcePath
+        ? path.relative(process.cwd(), loaded.sourcePath).replace(/\\/g, '/')
+        : nextConfigFile,
+      campaignId: loaded.campaignId || campaignId || null,
       runProfile: nextProfile,
       accounts: loaded.accounts,
       parallel: loaded.parallel,
@@ -584,7 +595,8 @@ async function main() {
   const browserManager = new BrowserManager(config);
   const authManager = new AuthManager(
     path.join(process.cwd(), 'accounts'),
-    config.baseUrl
+    config.baseUrl,
+    database
   );
   const aiService = new AIService(config);
 

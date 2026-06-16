@@ -5,9 +5,10 @@ const logger = require('./logger');
 const { sleep } = require('./utils');
 
 class AuthManager {
-  constructor(accountsDir = './accounts', baseUrl = 'https://x.com') {
+  constructor(accountsDir = './accounts', baseUrl = 'https://x.com', database = null) {
     this.accountsDir = accountsDir;
     this.baseUrl = baseUrl;
+    this.database = database;
   }
 
   async ensureAccountsDir() {
@@ -25,9 +26,24 @@ class AuthManager {
   async saveCookies(accountName, cookies) {
     await this.ensureAccountsDir();
     await fs.writeFile(this.getCookiePath(accountName), JSON.stringify(cookies, null, 2));
+    if (this.database?.connected) {
+      try {
+        await this.database.saveAccountCookies(accountName, cookies);
+      } catch (err) {
+        logger.warn(`${accountName}: failed to save cookies to DB: ${err.message}`);
+      }
+    }
   }
 
   async loadCookies(accountName) {
+    if (this.database?.connected) {
+      try {
+        const fromDb = await this.database.getAccountCookies(accountName);
+        if (fromDb?.length) return fromDb;
+      } catch (err) {
+        logger.warn(`${accountName}: DB cookie load failed: ${err.message}`);
+      }
+    }
     try {
       const data = await fs.readFile(this.getCookiePath(accountName), 'utf8');
       return JSON.parse(data);

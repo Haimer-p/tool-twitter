@@ -423,6 +423,75 @@ Return ONLY the appeal text.
     }
     return 'this';
   }
+
+  buildKeywordPrompt(meta, count = 60) {
+    const sym = meta.symbol || 'TOKEN';
+    const name = meta.name || sym;
+    return `
+Generate ${count} unique Twitter/X search keywords for a Solana memecoin campaign.
+
+Token: ${name} ($${sym})
+Dex: ${meta.dexUrl || ''}
+Mint: ${meta.mintAddress || ''}
+Website: ${meta.website || 'n/a'}
+Twitter: ${meta.twitter || 'n/a'}
+
+Rules:
+- Mix symbol variants ($${sym}, ${sym}, lowercase), narrative, CT slang, solana/pump fun terms
+- Include trading terms: chart, volume, breakout, gem, moon, raid, alpha, trending
+- NO duplicate lines
+- One keyword per line
+- No numbering, bullets, or quotes
+- Return ONLY the keyword list, nothing else
+`.trim();
+  }
+
+  parseKeywordList(raw) {
+    return String(raw || '')
+      .split(/\n+/)
+      .map((line) => line.replace(/^[-*\d.)\s]+/, '').trim())
+      .filter((k) => k.length > 1 && k.length < 80);
+  }
+
+  async generateKeywords(meta, options = {}) {
+    const { buildCoreKeywords, distributeKeywords } = require('./keywordUtils');
+    const count = options.count || 60;
+    const accountNames = options.accountNames || [];
+    const core = buildCoreKeywords(meta);
+    const prompt = this.buildKeywordPrompt(meta, count);
+    const providers = this.getProviderOrder();
+    let aiKeywords = [];
+
+    if (providers.length > 0) {
+      for (const provider of providers) {
+        try {
+          let raw;
+          if (provider === 'gemini') raw = await this.generateGemini(prompt);
+          else if (provider === 'deepseek') raw = await this.generateDeepSeek(prompt);
+          if (raw) {
+            aiKeywords = this.parseKeywordList(raw);
+            if (aiKeywords.length >= 10) break;
+          }
+        } catch (error) {
+          logger.warn(`Keyword ${provider} failed: ${error.message?.slice(0, 120)}`);
+        }
+      }
+    }
+
+    const allKeywords = [...new Set([...core, ...aiKeywords])];
+    const distributed = distributeKeywords(allKeywords, accountNames);
+
+    return {
+      allKeywords,
+      perAccount: distributed,
+      defaults: {
+        keywords: allKeywords,
+        interactions: {
+          replyRequiredIncludes: [meta.dexUrl, meta.symbol].filter(Boolean),
+        },
+      },
+    };
+  }
 }
 
 module.exports = AIService;

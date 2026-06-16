@@ -129,12 +129,56 @@ function filterAccountsByName(profiles, names) {
   return profiles.filter((p) => set.has(p.name));
 }
 
+function loadCampaignFromDb(database, campaignId, globalConfig = require('../config')) {
+  if (!database?.connected) return null;
+  return database.getCampaign(campaignId).then((raw) => {
+    if (!raw) return null;
+
+    const defaults = raw.defaults || {};
+    const parallel = {
+      maxConcurrent:
+        raw.parallel?.maxConcurrent ??
+        globalConfig.parallel?.maxConcurrent ??
+        2,
+    };
+
+    const accounts = (raw.accounts || [])
+      .filter((acc) => acc.name)
+      .map((acc) =>
+        resolveAccountProfile(
+          { ...acc, enabled: acc.enabled !== false },
+          defaults,
+          globalConfig
+        )
+      )
+      .filter((acc) => acc.enabled !== false);
+
+    if (accounts.length === 0) {
+      throw new Error(`Campaign ${raw.slug} has no enabled accounts`);
+    }
+
+    return {
+      accounts,
+      parallel,
+      sourcePath: null,
+      sourceName: raw.slug,
+      campaignId: String(raw._id),
+      campaign: raw,
+    };
+  });
+}
+
+async function loadCampaignFromDbAsync(database, campaignId, globalConfig) {
+  return loadCampaignFromDb(database, campaignId, globalConfig);
+}
+
 module.exports = {
   CONFIG_PATH,
   CONFIGS_DIR,
   listConfigFiles,
   resolveConfigPath,
   loadAccountConfig,
+  loadCampaignFromDb: loadCampaignFromDbAsync,
   filterAccountsByName,
   resolveAccountProfile,
   deepMerge,
