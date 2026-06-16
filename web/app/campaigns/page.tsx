@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import AuthGate from '@/components/AuthGate';
 import { apiFetch } from '@/lib/client';
 import { Pencil, Trash2, Copy, Archive, Plus } from 'lucide-react';
 
@@ -47,8 +46,7 @@ export default function CampaignsPage() {
   };
 
   return (
-    <AuthGate>
-      <div className="space-y-4">
+    <div className="space-y-4">
         <div className="flex justify-between items-center flex-wrap gap-3">
           <h1 className="text-2xl font-bold">Campaigns / Configs</h1>
           <div className="flex gap-2">
@@ -104,6 +102,5 @@ export default function CampaignsPage() {
           </table>
         </div>
       </div>
-    </AuthGate>
   );
 }

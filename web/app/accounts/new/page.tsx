@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import AuthGate from '@/components/AuthGate';
 import { apiFetch } from '@/lib/client';
 
 export default function NewAccountPage() {
@@ -25,8 +24,7 @@ export default function NewAccountPage() {
   };
 
   return (
-    <AuthGate>
-      <div className="max-w-xl space-y-4">
+    <div className="max-w-xl space-y-4">
         <h1 className="text-2xl font-bold">Thêm Account</h1>
         <div>
           <label className="label">Tên account</label>
@@ -45,6 +43,5 @@ export default function NewAccountPage() {
           Lưu
         </button>
       </div>
-    </AuthGate>
   );
 }

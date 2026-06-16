@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import AuthGate from '@/components/AuthGate';
 import { apiFetch } from '@/lib/client';
 import { Sparkles } from 'lucide-react';
 
@@ -81,8 +80,7 @@ export default function NewCampaignPage() {
   };
 
   return (
-    <AuthGate>
-      <div className="max-w-3xl space-y-6">
+    <div className="max-w-3xl space-y-6">
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Sparkles className="w-6 h-6 text-accent" />
           Generate Token Campaign
@@ -184,6 +182,5 @@ export default function NewCampaignPage() {
           </div>
         )}
       </div>
-    </AuthGate>
   );
 }

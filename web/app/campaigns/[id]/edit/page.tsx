@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import AuthGate from '@/components/AuthGate';
 import { apiFetch } from '@/lib/client';
 
 export default function EditCampaignPage() {
@@ -38,11 +37,10 @@ export default function EditCampaignPage() {
     }
   };
 
-  if (!campaign) return <AuthGate><p className="text-surface-muted">Loading...</p></AuthGate>;
+  if (!campaign) return <p className="text-surface-muted">Loading...</p>;
 
   return (
-    <AuthGate>
-      <div className="max-w-3xl space-y-4">
+    <div className="max-w-3xl space-y-4">
         <h1 className="text-2xl font-bold">
           Edit: ${String(campaign.symbol)} — {String(campaign.name)}
         </h1>
@@ -71,6 +69,5 @@ export default function EditCampaignPage() {
           Lưu & Activate
         </button>
       </div>
-    </AuthGate>
   );
 }

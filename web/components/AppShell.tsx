@@ -2,13 +2,15 @@
 
 import { useState } from 'react';
 import Sidebar from '@/components/Sidebar';
+import AuthGate from '@/components/AuthGate';
 import { Bot, Menu } from 'lucide-react';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-surface">
+    <AuthGate>
+      <div className="min-h-screen bg-surface">
       {/* Mobile top bar */}
       <header className="lg:hidden sticky top-0 z-40 flex items-center gap-3 border-b border-surface-border bg-surface-card px-4 py-3">
         <button
@@ -38,5 +40,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <main className="flex-1 min-w-0 p-4 sm:p-6 max-w-6xl w-full mx-auto">{children}</main>
       </div>
     </div>
+    </AuthGate>
   );
 }

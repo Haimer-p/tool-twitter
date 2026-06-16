@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import AuthGate from '@/components/AuthGate';
 import { apiFetch, useApiPoll } from '@/lib/client';
 import { Stethoscope, RefreshCw, Play } from 'lucide-react';
 
@@ -200,9 +199,5 @@ function HealthContent() {
 }
 
 export default function HealthPage() {
-  return (
-    <AuthGate>
-      <HealthContent />
-    </AuthGate>
-  );
+  return <HealthContent />;
 }

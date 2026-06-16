@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import AuthGate from '@/components/AuthGate';
 import { apiFetch } from '@/lib/client';
 import { Pencil, Trash2, Plus } from 'lucide-react';
 
@@ -41,8 +40,7 @@ export default function AccountsPage() {
   };
 
   return (
-    <AuthGate>
-      <div className="space-y-4">
+    <div className="space-y-4">
         <div className="page-header">
           <h1 className="text-xl sm:text-2xl font-bold">Accounts</h1>
           <div className="flex gap-2 shrink-0">
@@ -139,6 +137,5 @@ export default function AccountsPage() {
           </>
         )}
       </div>
-    </AuthGate>
   );
 }

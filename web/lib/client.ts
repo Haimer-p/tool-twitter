@@ -4,19 +4,52 @@ import { useEffect, useState, useCallback } from 'react';
 
 const STORAGE_KEY = 'dash_auth';
 
-export function getAuthHeader() {
+function readStoredToken(): string {
   if (typeof window === 'undefined') return '';
-  const raw = sessionStorage.getItem(STORAGE_KEY);
+  let raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) {
+    raw = sessionStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      localStorage.setItem(STORAGE_KEY, raw);
+      sessionStorage.removeItem(STORAGE_KEY);
+    }
+  }
+  return raw || '';
+}
+
+export function hasStoredAuth(): boolean {
+  return !!readStoredToken();
+}
+
+export function getAuthHeader() {
+  const raw = readStoredToken();
   if (!raw) return '';
   return `Basic ${raw}`;
 }
 
 export function setAuth(user: string, pass: string) {
-  sessionStorage.setItem(STORAGE_KEY, btoa(`${user}:${pass}`));
+  localStorage.setItem(STORAGE_KEY, btoa(`${user}:${pass}`));
+  sessionStorage.removeItem(STORAGE_KEY);
 }
 
 export function clearAuth() {
+  localStorage.removeItem(STORAGE_KEY);
   sessionStorage.removeItem(STORAGE_KEY);
+}
+
+export async function verifyStoredAuth(): Promise<boolean> {
+  const auth = getAuthHeader();
+  if (!auth) return false;
+  try {
+    const res = await fetch('/api/runtime', { headers: { Authorization: auth } });
+    if (!res.ok) {
+      clearAuth();
+      return false;
+    }
+    return true;
+  } catch {
+    return hasStoredAuth();
+  }
 }
 
 export async function apiFetch(path: string, options: RequestInit = {}) {
@@ -27,7 +60,10 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
   headers.set('Authorization', auth);
 
   const res = await fetch(path, { ...options, headers });
-  if (res.status === 401) throw new Error('Unauthorized');
+  if (res.status === 401) {
+    clearAuth();
+    throw new Error('Unauthorized');
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || res.statusText);
   return data;

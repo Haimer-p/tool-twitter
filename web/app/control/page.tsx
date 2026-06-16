@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import AuthGate from '@/components/AuthGate';
 import { apiFetch, useApiPoll } from '@/lib/client';
 import { Play, Square, Stethoscope } from 'lucide-react';
 
@@ -59,8 +58,7 @@ export default function ControlPage() {
   };
 
   return (
-    <AuthGate>
-      <div className="max-w-xl space-y-6">
+    <div className="max-w-xl space-y-6">
         <h1 className="text-2xl font-bold">Bot Control</h1>
 
         <div className="card space-y-2">
@@ -128,6 +126,5 @@ export default function ControlPage() {
           </div>
         ) : null}
       </div>
-    </AuthGate>
   );
 }

@@ -5,3 +5,6 @@ configs/
 logs/
 *.log
 .DS_Store
+
+/control-spam-web
+/web

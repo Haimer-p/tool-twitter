@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import AuthGate from '@/components/AuthGate';
 import { apiFetch } from '@/lib/client';
 
 export default function EditAccountPage() {
@@ -36,8 +35,7 @@ export default function EditAccountPage() {
   };
 
   return (
-    <AuthGate>
-      <div className="max-w-xl space-y-4">
+    <div className="max-w-xl space-y-4">
         <h1 className="text-2xl font-bold">Sửa: {name}</h1>
         <div>
           <label className="label flex items-center gap-2">
@@ -63,6 +61,5 @@ export default function EditAccountPage() {
           Lưu
         </button>
       </div>
-    </AuthGate>
   );
 }

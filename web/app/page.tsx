@@ -1,6 +1,5 @@
 'use client';
 
-import AuthGate from '@/components/AuthGate';
 import { useApiPoll } from '@/lib/client';
 import { Heart, Repeat2, MessageCircle, UserPlus, Wifi, WifiOff } from 'lucide-react';
 
@@ -77,9 +76,5 @@ function DashboardContent() {
 }
 
 export default function HomePage() {
-  return (
-    <AuthGate>
-      <DashboardContent />
-    </AuthGate>
-  );
+  return <DashboardContent />;
 }
