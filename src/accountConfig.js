@@ -172,13 +172,137 @@ async function loadCampaignFromDbAsync(database, campaignId, globalConfig) {
   return loadCampaignFromDb(database, campaignId, globalConfig);
 }
 
+function configFileRelativePath(configPath) {
+  const rel = path.relative(process.cwd(), configPath).replace(/\\/g, '/');
+  return rel.startsWith('configs/') ? rel : `configs/${path.basename(configPath)}`;
+}
+
+function summarizeConfigFile(configFile, globalConfig = require('../config')) {
+  const configPath = resolveConfigPath(configFile);
+  const raw = readConfigJson(configPath);
+  if (!raw) return null;
+  const names = (raw.accounts || [])
+    .filter((a) => a.name && a.enabled !== false)
+    .map((a) => a.name);
+  return {
+    type: 'file',
+    name: path.basename(configPath),
+    path: configFileRelativePath(configPath),
+    accountCount: names.length,
+    accounts: names,
+  };
+}
+
+function listConfigSummaries(globalConfig = require('../config')) {
+  return listConfigFiles()
+    .map((abs) => summarizeConfigFile(configFileRelativePath(abs), globalConfig))
+    .filter(Boolean);
+}
+
+async function resolveBatchProfiles(
+  database,
+  globalConfig,
+  { campaignIds = [], configFiles = [], accountNames = [] } = {}
+) {
+  const ids = [...new Set((campaignIds || []).map(String).filter(Boolean))];
+  const files = [...new Set((configFiles || []).map(String).filter(Boolean))];
+
+  if (!ids.length && !files.length) {
+    throw new Error('At least one campaignId or configFile required');
+  }
+
+  const sources = [];
+
+  for (const id of ids) {
+    const loaded = await loadCampaignFromDb(database, id, globalConfig);
+    if (!loaded) throw new Error(`Campaign not found: ${id}`);
+    sources.push({
+      type: 'campaign',
+      name: loaded.sourceName,
+      campaignId: loaded.campaignId,
+      accounts: loaded.accounts,
+      parallel: loaded.parallel,
+    });
+  }
+
+  for (const file of files) {
+    const loaded = loadAccountConfig(globalConfig, { configFile: file });
+    if (!loaded) throw new Error(`Config not found: ${file}`);
+    sources.push({
+      type: 'file',
+      name: loaded.sourceName,
+      path: configFileRelativePath(loaded.sourcePath),
+      accounts: loaded.accounts,
+      parallel: loaded.parallel,
+    });
+  }
+
+  const seen = new Map();
+  const duplicates = [];
+
+  for (const src of sources) {
+    for (const acc of src.accounts) {
+      const key = acc.name;
+      if (seen.has(key)) {
+        duplicates.push({ account: key, sources: [seen.get(key), src.name] });
+      } else {
+        seen.set(key, src.name);
+      }
+    }
+  }
+
+  if (duplicates.length) {
+    const detail = duplicates
+      .map((d) => `${d.account} (${d.sources.join(' + ')})`)
+      .join(', ');
+    throw new Error(`Duplicate accounts across configs: ${detail}`);
+  }
+
+  let profiles = sources.flatMap((src) =>
+    src.accounts.map((acc) => ({
+      ...acc,
+      _source: src.name,
+      _sourceType: src.type,
+    }))
+  );
+
+  if (accountNames?.length) {
+    profiles = filterAccountsByName(profiles, accountNames);
+  }
+
+  if (!profiles.length) {
+    throw new Error('No accounts to run after batch merge');
+  }
+
+  const activeSources = sources.map((s) => ({
+    type: s.type,
+    name: s.name,
+    path: s.path || null,
+    campaignId: s.campaignId || null,
+    accountCount: s.accounts.length,
+  }));
+
+  const defaultMax = parseInt(process.env.MAX_PARALLEL_ACCOUNTS || '2', 10);
+
+  return {
+    profiles,
+    sources: activeSources,
+    totalAccounts: profiles.length,
+    suggestedMaxConcurrent: Math.min(defaultMax, profiles.length),
+  };
+}
+
 module.exports = {
   CONFIG_PATH,
   CONFIGS_DIR,
   listConfigFiles,
+  listConfigSummaries,
+  summarizeConfigFile,
+  configFileRelativePath,
   resolveConfigPath,
   loadAccountConfig,
   loadCampaignFromDb: loadCampaignFromDbAsync,
+  resolveBatchProfiles,
   filterAccountsByName,
   resolveAccountProfile,
   deepMerge,

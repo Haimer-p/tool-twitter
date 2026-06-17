@@ -1134,7 +1134,12 @@ class EngagementBot {
           this.onActivity,
           this
         );
-        await workerBot.processAccount(profile);
+        try {
+          await workerBot.processAccount(profile);
+        } catch (error) {
+          const src = profile._source ? `[${profile._source}] ` : '';
+          logger.error(`${src}${profile.name}: account run failed: ${error.message}`);
+        }
       }
     };
 

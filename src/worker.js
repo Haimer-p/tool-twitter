@@ -14,6 +14,7 @@ const {
   loadAccountConfig,
   loadCampaignFromDb,
   filterAccountsByName,
+  resolveBatchProfiles,
 } = require('./accountConfig');
 const { AccountHealthChecker, listCookieAccounts } = require('./accountHealthCheck');
 const { persistHealthCheckResults } = require('./healthCheckReport');
@@ -71,6 +72,30 @@ function applyRunProfile(accounts, runProfile) {
 }
 
 async function resolveProfiles(cmd) {
+  const useBatch =
+    (Array.isArray(cmd.campaignIds) && cmd.campaignIds.length > 0) ||
+    (Array.isArray(cmd.configFiles) && cmd.configFiles.length > 0);
+
+  if (useBatch) {
+    const batch = await resolveBatchProfiles(database, config, {
+      campaignIds: cmd.campaignIds || (cmd.campaignId ? [cmd.campaignId] : []),
+      configFiles: cmd.configFiles || (cmd.configFile ? [cmd.configFile] : []),
+      accountNames: cmd.accountNames,
+    });
+    let profiles = applyRunProfile(batch.profiles, cmd.runProfile || 'vua');
+    const maxConcurrent = Math.min(
+      cmd.maxConcurrentOverride ??
+        parseInt(process.env.MAX_PARALLEL_ACCOUNTS || '2', 10),
+      profiles.length
+    );
+    return {
+      profiles,
+      maxConcurrent,
+      source: batch.sources.map((s) => s.name).join(', '),
+      batchMeta: batch,
+    };
+  }
+
   if (cmd.campaignId) {
     const loaded = await loadCampaignFromDb(database, cmd.campaignId, config);
     if (!loaded) throw new Error(`Campaign not found: ${cmd.campaignId}`);
@@ -103,13 +128,20 @@ async function runBot(profiles, maxConcurrent, meta = {}) {
   await database.upsertBotRuntime(WORKER_ID, {
     running: true,
     campaignId: meta.campaignId || null,
+    campaignIds: meta.campaignIds || [],
+    configFiles: meta.configFiles || [],
+    activeSources: meta.activeSources || [],
+    maxConcurrentOverride: maxConcurrent,
     runProfile: meta.runProfile || 'vua',
     startedAt: new Date(),
     activeAccounts: profiles.map((p) => p.name),
     stopping: false,
   });
 
-  logger.info(`Worker bot started (${profiles.length} accounts)`);
+  const sourceLabel = meta.activeSources?.length
+    ? meta.activeSources.map((s) => `[${s.name}]`).join(' ')
+    : meta.source || 'batch';
+  logger.info(`Worker bot started (${profiles.length} accounts) sources: ${sourceLabel}`);
   try {
     await bot.runParallelAccounts(profiles, maxConcurrent);
   } catch (error) {
@@ -122,18 +154,26 @@ async function runBot(profiles, maxConcurrent, meta = {}) {
       running: false,
       stopping: false,
       activeAccounts: [],
+      campaignIds: [],
+      configFiles: [],
+      activeSources: [],
     });
     logger.info('Worker bot finished');
   }
 }
 
 async function handleStart(cmd) {
-  const { profiles, maxConcurrent, source } = await resolveProfiles(cmd);
+  const resolved = await resolveProfiles(cmd);
+  const { profiles, maxConcurrent, source, batchMeta } = resolved;
   if (!profiles.length) throw new Error('No accounts to run');
-  logger.info(`Start campaign/config: ${source}, profile: ${cmd.runProfile || 'vua'}`);
+  logger.info(`Start batch: ${source}, profile: ${cmd.runProfile || 'vua'}, concurrent: ${maxConcurrent}`);
   await runBot(profiles, maxConcurrent, {
-    campaignId: cmd.campaignId,
+    campaignId: cmd.campaignId || null,
+    campaignIds: batchMeta?.sources?.filter((s) => s.type === 'campaign').map((s) => s.campaignId) || (cmd.campaignId ? [cmd.campaignId] : []),
+    configFiles: batchMeta?.sources?.filter((s) => s.type === 'file').map((s) => s.path) || cmd.configFiles || [],
+    activeSources: batchMeta?.sources || [],
     runProfile: cmd.runProfile,
+    source,
   });
 }
 

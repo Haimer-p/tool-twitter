@@ -6,5 +6,7 @@ logs/
 *.log
 .DS_Store
 
-# /control-spam-web
-/web
+/control-spam-web
+
+# Thư mục web cũ — xóa hẳn nếu còn node_modules bị lock
+/web/

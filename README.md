@@ -389,7 +389,9 @@ AI reply via Gemini (gemini-2.5-flash)
 
 ## Dashboard
 
-Sau khi `npm start`, mở:
+**Dashboard mới (khuyến nghị):** thư mục `control-spam-web/` — Next.js, deploy Vercel. Dev: `cd control-spam-web && npm run dev` → http://localhost:3000. Xem [DEPLOY.md](./DEPLOY.md).
+
+**Dashboard legacy:** `npm start` mở Express + `public/dashboard.html` tại:
 
 ```text
 http://localhost:<DASHBOARD_PORT>
@@ -447,18 +449,19 @@ tool-farm-twitter/
 ├── accounts/                 # Cookies từng account (*.json) — không commit
 ├── accounts.config.json      # Cấu hình account, keyword, delay (của bạn)
 ├── accounts.config.example.json
+├── control-spam-web/         # Dashboard Next.js (deploy Vercel) — repo riêng
 ├── .env                      # API keys, MongoDB — không commit
 ├── config.js                 # Default global
 ├── src/
 │   ├── index.js              # Entry, schedule, orchestration
-│   ├── accountConfig.js      # Đọc accounts.config.json
+│   ├── worker.js             # Poll lệnh từ DB, chạy bot
+│   ├── accountConfig.js      # Đọc config + campaign DB
 │   ├── engage.js             # Bot: search, combo, parallel
 │   ├── auth.js               # Login / cookies
 │   ├── ai.js                 # Gemini + DeepSeek
 │   ├── browser.js            # Puppeteer
-│   ├── database.js           # MongoDB
-│   └── dashboard.js          # Web UI + API
-├── public/dashboard.html
+│   └── database.js           # MongoDB
+├── public/dashboard.html     # Legacy dashboard (npm start)
 └── scripts/
     ├── login-account.js      # npm run login
     └── test-ai.js            # npm run test:ai

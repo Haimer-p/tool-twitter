@@ -49,6 +49,7 @@ class BrowserManager {
     const launchOptions = {
       headless,
       args,
+      protocolTimeout: parseInt(process.env.BROWSER_PROTOCOL_TIMEOUT_MS || '180000', 10),
       ...overrides.launchOptions,
     };
 
