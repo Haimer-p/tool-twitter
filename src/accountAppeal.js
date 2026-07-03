@@ -45,9 +45,15 @@ class AccountAppealRunner {
   }
 
   async captureScreenshot(page, accountName) {
+    if (!page || (typeof page.isClosed === 'function' && page.isClosed())) return null;
     fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
     const filePath = path.join(SCREENSHOT_DIR, `${accountName}.png`);
-    await page.screenshot({ path: filePath, fullPage: false });
+    await Promise.race([
+      page.screenshot({ path: filePath, fullPage: false, timeout: 15000 }),
+      sleep(15000).then(() => {
+        throw new Error('screenshot timeout');
+      }),
+    ]);
     return `/api/appeal/screenshots/${accountName}`;
   }
 
@@ -450,9 +456,11 @@ class AccountAppealRunner {
           await sleep(1500);
           if (await this.isAppealSuccess(page)) {
             this.onWaitingCaptcha({ accountName, waiting: false });
+            logger.info(`[${accountName}] Appeal captcha/success confirmed`);
             return { ok: true, reason: 'user_confirmed' };
           }
           this.onWaitingCaptcha({ accountName, waiting: false });
+          logger.info(`[${accountName}] Appeal captcha marked done by user`);
           return { ok: true, reason: 'user_confirmed' };
         }
       } else if (this.mode === 'terminal') {
@@ -600,7 +608,14 @@ class AccountAppealRunner {
       return result;
     } finally {
       result.durationMs = Date.now() - startedAt;
-      // Không tự động đóng browser — user tự đóng khi xong
+      if (browserManager) {
+        try {
+          await browserManager.close();
+          logger.info(`[${accountName}] Appeal browser closed`);
+        } catch (closeErr) {
+          logger.warn(`[${accountName}] Appeal browser close: ${closeErr.message}`);
+        }
+      }
     }
   }
 

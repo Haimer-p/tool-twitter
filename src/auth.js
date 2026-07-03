@@ -66,10 +66,13 @@ class AuthManager {
   }
 
   async isLoggedInOnPage(page) {
+    if (await this.isHumanVerificationPage(page)) return false;
+
     return page
       .evaluate(() => {
         const url = window.location.href;
         if (url.includes('/login') || url.includes('/i/flow/login')) return false;
+        if (url.includes('/account/access')) return false;
         return !!(
           document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]') ||
           document.querySelector('[data-testid="AppTabBar_Home_Link"]') ||
@@ -79,16 +82,40 @@ class AuthManager {
       .catch(() => false);
   }
 
+  async isHumanVerificationPage(page) {
+    return page
+      .evaluate(() => {
+        const text = (document.body?.innerText || '').toLowerCase();
+        const title = (document.title || '').toLowerCase();
+
+        if (
+          text.includes('verifying you are human') ||
+          text.includes('verify you are human') ||
+          text.includes('checking your browser') ||
+          text.includes('security service to protect against malicious bots') ||
+          title.includes('just a moment')
+        ) {
+          return true;
+        }
+
+        return !!document.querySelector(
+          '#challenge-form, .cf-turnstile, iframe[src*="challenges.cloudflare.com"], [id*="turnstile"]'
+        );
+      })
+      .catch(() => false);
+  }
+
   async isSuspendedOnPage(page) {
+    if (await this.isHumanVerificationPage(page)) return false;
+
     return page
       .evaluate(() => {
         const url = window.location.href.toLowerCase();
         const urlHints =
-          url.includes('/account/access') ||
           url.includes('/account/suspended') ||
           url.includes('/account/locked') ||
           (url.includes('/i/flow/') &&
-            (url.includes('suspended') || url.includes('locked') || url.includes('access')));
+            (url.includes('suspended') || url.includes('locked')));
 
         const bodyText = (document.body?.innerText || '').toLowerCase();
         const textHints =
@@ -101,16 +128,35 @@ class AuthManager {
           (bodyText.includes('suspended') && bodyText.includes('appeal')) ||
           (bodyText.includes('violat') && bodyText.includes('rules'));
 
-        return urlHints || textHints;
+        const accessPageSuspended =
+          url.includes('/account/access') &&
+          (bodyText.includes('suspended') ||
+            bodyText.includes('locked') ||
+            bodyText.includes('submit an appeal') ||
+            bodyText.includes('file an appeal'));
+
+        return urlHints || textHints || accessPageSuspended;
       })
       .catch(() => false);
   }
 
   async waitForManualLogin(page, timeoutMs = 300000, checkEveryMs = 2500) {
     const startedAt = Date.now();
+    let lastHumanLog = 0;
     while (Date.now() - startedAt < timeoutMs) {
       if (await this.isLoggedInOnPage(page)) return true;
-      if (await this.isSuspendedOnPage(page)) return true;
+
+      if (await this.isHumanVerificationPage(page)) {
+        if (Date.now() - lastHumanLog > 20000) {
+          logger.info(
+            'Đang chờ xác minh human (Cloudflare) — hoàn thành challenge trong browser, script sẽ tự tiếp tục...'
+          );
+          lastHumanLog = Date.now();
+        }
+      } else if (await this.isSuspendedOnPage(page)) {
+        return true;
+      }
+
       await sleep(checkEveryMs);
     }
     return false;
@@ -161,6 +207,11 @@ class AuthManager {
     const done = await this.waitForManualLogin(page, manualTimeoutMs);
     if (!done) {
       logger.warn(`${accountName}: manual login timeout (appeal)`);
+      return { ok: false, suspended: false, alive: false };
+    }
+
+    if (await this.isHumanVerificationPage(page)) {
+      logger.warn(`${accountName}: vẫn ở trang xác minh human — chưa lưu cookies`);
       return { ok: false, suspended: false, alive: false };
     }
 
@@ -219,9 +270,26 @@ class AuthManager {
       return false;
     }
 
+    if (await this.isHumanVerificationPage(page)) {
+      logger.warn(`${accountName}: vẫn ở trang xác minh human — chưa lưu cookies`);
+      return false;
+    }
+
+    const loggedIn = await this.isLoggedInOnPage(page);
+    const suspended = await this.isSuspendedOnPage(page);
+
+    if (!loggedIn && !suspended) {
+      logger.warn(`${accountName}: chưa đăng nhập thành công — không lưu cookies`);
+      return false;
+    }
+
     const newCookies = await page.cookies();
     await this.saveCookies(accountName, newCookies);
-    logger.info(`${accountName}: cookies saved`);
+    if (loggedIn) {
+      logger.info(`${accountName}: cookies saved`);
+    } else {
+      logger.warn(`${accountName}: cookies saved (account suspended — dùng cho appeal)`);
+    }
 
     return true;
   }

@@ -141,7 +141,7 @@ tokenCampaignSchema.index({ status: 1, updatedAt: -1 });
 const botCommandSchema = new mongoose.Schema({
   action: {
     type: String,
-    enum: ['start', 'stop', 'health_check', 'login_account', 'appeal', 'generate_keywords'],
+    enum: ['start', 'stop', 'health_check', 'login_account', 'appeal', 'appeal_captcha_done', 'generate_keywords'],
     required: true,
   },
   campaignId: { type: mongoose.Schema.Types.ObjectId, ref: 'TokenCampaign' },
@@ -177,6 +177,9 @@ const botRuntimeSchema = new mongoose.Schema({
   lastHeartbeat: { type: Date, default: Date.now },
   activeAccounts: { type: [String], default: [] },
   stopping: { type: Boolean, default: false },
+  appealRunning: { type: Boolean, default: false },
+  appealWaitingCaptcha: { type: Boolean, default: false },
+  appealCurrentAccount: { type: String, default: null },
 }, { timestamps: true });
 
 const InteractedTweet = mongoose.model('InteractedTweet', interactedTweetSchema);
@@ -609,6 +612,13 @@ class Database {
       },
       { new: true }
     ).lean();
+  }
+
+  async releaseStaleProcessingCommands(workerId) {
+    return BotCommand.updateMany(
+      { status: 'processing', workerId },
+      { status: 'failed', error: 'Interrupted — worker restarted or stale command' }
+    );
   }
 
   async listRecentCommands(limit = 20) {

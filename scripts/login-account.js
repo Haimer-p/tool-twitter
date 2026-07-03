@@ -67,12 +67,15 @@ Sau khi đăng nhập xong, thêm vào accounts.config.json:
     database
   );
 
-  await browserManager.launch();
-  const page = await browserManager.newPage();
+  await browserManager.launch({ headless: false, captchaFriendly: true });
+  const page = await browserManager.newPage({ captchaFriendly: true });
   let keepOpenAfterSuccess = false;
 
   try {
-    const ok = await authManager.login(page, accountName);
+    const ok = await authManager.login(page, accountName, {
+      mode: 'terminal',
+      manualTimeoutMs: parseInt(process.env.LOGIN_MANUAL_TIMEOUT_MS || '600000', 10),
+    });
     if (ok) {
       logger.info(`Hoàn tất! File cookies: accounts/${accountName}.json`);
       console.log('\nBước tiếp theo: mở accounts.config.json và thêm block account ở trên.\n');

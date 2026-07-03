@@ -18,6 +18,7 @@ const {
 } = require('./accountConfig');
 const { AccountHealthChecker, listCookieAccounts } = require('./accountHealthCheck');
 const { persistHealthCheckResults } = require('./healthCheckReport');
+const { AccountAppealRunner } = require('./accountAppeal');
 const logger = require('./logger');
 
 const WORKER_ID = process.env.WORKER_ID || `worker-${require('os').hostname()}`;
@@ -54,6 +55,9 @@ let stopRequested = false;
 let heartbeatTimer = null;
 let authManager = null;
 let manualLoginSession = null;
+let appealInProgress = false;
+let appealCaptchaWaiter = null;
+let appealCaptchaWaiters = [];
 
 function applyRunProfile(accounts, runProfile) {
   const profile = RUN_PROFILES[runProfile] || RUN_PROFILES.vua;
@@ -265,6 +269,86 @@ async function handleLoginAccount(cmd) {
   return { ok: true, accountName, keptOpen: true };
 }
 
+async function handleAppeal(cmd) {
+  const accountNames = (cmd.accountNames || []).map((n) => String(n).trim()).filter(Boolean);
+  if (!accountNames.length) throw new Error('accountNames required for appeal');
+
+  const accountsDir = path.join(process.cwd(), 'accounts');
+  appealInProgress = true;
+
+  await database.upsertBotRuntime(WORKER_ID, {
+    appealRunning: true,
+    appealWaitingCaptcha: false,
+    appealCurrentAccount: null,
+  });
+
+  try {
+    const runner = new AccountAppealRunner(config, {
+      accountsDir,
+      mode: 'dashboard',
+      force: true,
+      onProgress: (payload) => {
+        if (payload.type === 'account_start' && payload.accountName) {
+          database
+            .upsertBotRuntime(WORKER_ID, { appealCurrentAccount: payload.accountName })
+            .catch(() => {});
+        }
+      },
+      onWaitingCaptcha: (payload) => {
+        database
+          .upsertBotRuntime(WORKER_ID, {
+            appealWaitingCaptcha: !!payload.waiting,
+            appealCurrentAccount: payload.accountName || undefined,
+          })
+          .catch(() => {});
+      },
+      waitCaptchaSignal: () =>
+        new Promise((resolve) => {
+          appealCaptchaWaiters.push(resolve);
+          appealCaptchaWaiter = resolve;
+        }),
+    });
+
+    const results = await runner.runAll(accountNames);
+    const summary = results.reduce(
+      (s, r) => {
+        s[r.status] = (s[r.status] || 0) + 1;
+        return s;
+      },
+      { total: results.length }
+    );
+
+    logger.info(
+      `Appeal done: ${results.filter((r) => r.status === 'submitted').length} submitted, ` +
+        `${results.filter((r) => r.status === 'skipped').length} skipped`
+    );
+
+    return { results, summary };
+  } finally {
+    appealInProgress = false;
+    appealCaptchaWaiter = null;
+    appealCaptchaWaiters = [];
+    await database.upsertBotRuntime(WORKER_ID, {
+      appealRunning: false,
+      appealWaitingCaptcha: false,
+      appealCurrentAccount: null,
+    });
+  }
+}
+
+function handleAppealCaptchaDone() {
+  const waiters = [...appealCaptchaWaiters];
+  appealCaptchaWaiters = [];
+  appealCaptchaWaiter = null;
+  if (waiters.length) {
+    waiters.forEach((resolve) => resolve(true));
+    logger.info(`Appeal captcha done signal received (${waiters.length} waiter(s))`);
+    return { ok: true };
+  }
+  logger.warn('Appeal captcha done ignored: not waiting');
+  return { ok: false, reason: 'not_waiting' };
+}
+
 async function processCommand(cmd) {
   try {
     if (cmd.action === 'start') {
@@ -280,7 +364,16 @@ async function processCommand(cmd) {
       await database.finishCommand(cmd._id, result);
     } else if (cmd.action === 'login_account') {
       if (botRunning) throw new Error('Bot is running — stop it before login_account');
+      if (appealInProgress) throw new Error('Appeal in progress');
       const result = await handleLoginAccount(cmd);
+      await database.finishCommand(cmd._id, result);
+    } else if (cmd.action === 'appeal') {
+      if (botRunning) throw new Error('Bot is running — stop it before appeal');
+      if (appealInProgress) throw new Error('Appeal already in progress');
+      const result = await handleAppeal(cmd);
+      await database.finishCommand(cmd._id, result);
+    } else if (cmd.action === 'appeal_captcha_done') {
+      const result = handleAppealCaptchaDone();
       await database.finishCommand(cmd._id, result);
     } else {
       await database.finishCommand(cmd._id, null, `Unknown action: ${cmd.action}`);
@@ -303,6 +396,16 @@ async function pollLoop() {
       return;
     }
 
+    if (
+      appealInProgress &&
+      cmd.action !== 'stop' &&
+      cmd.action !== 'appeal_captcha_done'
+    ) {
+      await database.finishCommand(cmd._id, null, 'Appeal in progress');
+      logger.warn(`Ignored ${cmd.action} while appeal running`);
+      return;
+    }
+
     await processCommand(cmd);
   } catch (error) {
     logger.error(`Poll loop error: ${error.message}`);
@@ -310,10 +413,16 @@ async function pollLoop() {
 }
 
 async function heartbeat() {
-  await database.upsertBotRuntime(WORKER_ID, {
+  const patch = {
     running: botRunning,
     lastHeartbeat: new Date(),
-  });
+  };
+  if (!appealInProgress) {
+    patch.appealRunning = false;
+    patch.appealWaitingCaptcha = false;
+    patch.appealCurrentAccount = null;
+  }
+  await database.upsertBotRuntime(WORKER_ID, patch);
 }
 
 async function main() {
@@ -331,6 +440,19 @@ async function main() {
 
   database = new Database(config.database.mongodbUri);
   await database.connect();
+
+  const released = await database.releaseStaleProcessingCommands(WORKER_ID);
+  if (released?.modifiedCount > 0) {
+    logger.warn(`Released ${released.modifiedCount} stale command(s) from previous worker session`);
+  }
+
+  await database.upsertBotRuntime(WORKER_ID, {
+    running: false,
+    appealRunning: false,
+    appealWaitingCaptcha: false,
+    appealCurrentAccount: null,
+    lastHeartbeat: new Date(),
+  });
 
   const browserManager = new BrowserManager(config);
   authManager = new AuthManager(
