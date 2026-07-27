@@ -1,10 +1,11 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const logger = require('./logger');
+const { getGeminiKeyPool, parseGeminiKeysFromEnv } = require('./geminiKeyPool');
 
 class AIService {
   constructor(config) {
     this.config = config;
-    this.geminiKey = process.env.GEMINI_API_KEY || '';
+    this.geminiPool = getGeminiKeyPool();
     this.deepseekKey = process.env.DEEPSEEK_API_KEY || '';
     this.strategy = config.ai?.strategy || 'alternate';
     this.replyCount = 0;
@@ -14,8 +15,11 @@ class AIService {
       ...(config.gemini.fallbackModels || []),
     ].filter((name, i, arr) => name && arr.indexOf(name) === i);
 
-    if (this.geminiKey) {
-      this.genAI = new GoogleGenerativeAI(this.geminiKey);
+    if (this.geminiPool.hasKeys()) {
+      const status = this.geminiPool.getStatus();
+      logger.info(
+        `Gemini key pool: ${status.available}/${status.total} available (reset ${status.resetDate})`
+      );
     }
   }
 
@@ -171,7 +175,7 @@ Return ONLY the reply text.
 
   getEnabledProviders() {
     const providers = [];
-    if (this.geminiKey) providers.push('gemini');
+    if (this.geminiPool.hasKeys()) providers.push('gemini');
     if (this.deepseekKey) providers.push('deepseek');
     return providers;
   }
@@ -205,32 +209,41 @@ Return ONLY the reply text.
   }
 
   async generateGemini(prompt) {
-    if (!this.genAI) throw new Error('Gemini API key not configured');
+    if (!this.geminiPool.hasKeys()) throw new Error('Gemini API key not configured');
 
-    const failures = [];
-    for (const modelName of this.geminiModels) {
-      try {
-        const model = this.genAI.getGenerativeModel({
-          model: modelName,
-          generationConfig: {
-            temperature: this.config.gemini.temperature,
-          },
-        });
-        const result = await model.generateContent(prompt);
-        const text = result.response.text().trim();
-        if (text) {
-          logger.info(`AI reply via Gemini (${modelName})`);
-          return text;
+    return this.geminiPool.executeWithFallback(async (apiKey, keyIndex) => {
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const label = this.geminiPool.keyLabel(keyIndex);
+      const failures = [];
+
+      for (const modelName of this.geminiModels) {
+        try {
+          const model = genAI.getGenerativeModel({
+            model: modelName,
+            generationConfig: {
+              temperature: this.config.gemini.temperature,
+            },
+          });
+          const result = await model.generateContent(prompt);
+          const text = result.response.text().trim();
+          if (text) {
+            logger.info(`AI reply via Gemini ${label} (${modelName})`);
+            return text;
+          }
+        } catch (error) {
+          const short = error.message?.slice(0, 120) || String(error);
+          failures.push({ modelName, short });
+          logger.warn(`Gemini ${label} ${modelName}: ${short.slice(0, 100)}`);
+          if (this.geminiPool.isKeyLevelError(error)) {
+            throw error;
+          }
         }
-      } catch (error) {
-        const short = error.message?.slice(0, 120) || String(error);
-        failures.push({ modelName, short });
-        logger.warn(`Gemini ${modelName}: ${short.slice(0, 100)}`);
       }
-    }
-    throw new Error(
-      `All Gemini models failed (${failures.map((f) => f.modelName).join(', ')})`
-    );
+
+      throw new Error(
+        `All Gemini models failed for ${label} (${failures.map((f) => f.modelName).join(', ')})`
+      );
+    });
   }
 
   async generateDeepSeek(prompt) {
@@ -289,7 +302,7 @@ Return ONLY the reply text.
     const providers = this.getProviderOrder();
 
     if (providers.length === 0) {
-      logger.error('No AI provider configured (GEMINI_API_KEY or DEEPSEEK_API_KEY)');
+      logger.error('No AI provider configured (GEMINI_API_KEY(S) or DEEPSEEK_API_KEY)');
       return this.finalizeReply(this.fallbackReply(tweetText), replyOptions);
     }
 

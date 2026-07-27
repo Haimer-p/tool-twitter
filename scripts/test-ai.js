@@ -5,6 +5,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }
 
 const config = require('../config');
 const AIService = require('../src/ai');
+const { parseGeminiKeysFromEnv, getGeminiKeyPool } = require('../src/geminiKeyPool');
 
 const SAMPLE_TWEET = 'Bitcoin just broke $100k! The bull run is finally here.';
 const SAMPLE_AUTHOR = 'cryptotrader';
@@ -20,15 +21,20 @@ async function testStrategy(strategy, label) {
 }
 
 async function main() {
-  const hasGemini = !!process.env.GEMINI_API_KEY;
+  const geminiKeys = parseGeminiKeysFromEnv();
+  const hasGemini = geminiKeys.length > 0;
   const hasDeepseek = !!process.env.DEEPSEEK_API_KEY;
 
   console.log('=== AI Provider Test ===');
-  console.log(`Gemini key: ${hasGemini ? 'OK' : 'MISSING'}`);
+  console.log(`Gemini keys: ${hasGemini ? geminiKeys.length : 'MISSING'}`);
+  if (hasGemini) {
+    const status = getGeminiKeyPool().getStatus();
+    console.log(`Gemini pool: ${status.available}/${status.total} available (reset ${status.resetDate})`);
+  }
   console.log(`DeepSeek key: ${hasDeepseek ? 'OK' : 'MISSING'}`);
 
   if (!hasGemini && !hasDeepseek) {
-    console.error('Need GEMINI_API_KEY or DEEPSEEK_API_KEY in .env');
+    console.error('Need GEMINI_API_KEY / GEMINI_API_KEYS or DEEPSEEK_API_KEY in .env');
     process.exit(1);
   }
 

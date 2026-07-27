@@ -68,6 +68,65 @@ test('comboRatios sum to 1', () => {
   assert.ok(Math.abs(sum - 1) < 0.001, `sum=${sum}`);
 });
 
+console.log('\n=== Gemini key pool ===');
+const { parseGeminiKeysFromEnv, GeminiKeyPool } = require('../src/geminiKeyPool');
+test('parseGeminiKeysFromEnv splits comma in GEMINI_API_KEY', () => {
+  const prev = {
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+    GEMINI_API_KEYS: process.env.GEMINI_API_KEYS,
+  };
+  process.env.GEMINI_API_KEY = 'key-a,key-b,key-c';
+  delete process.env.GEMINI_API_KEYS;
+  try {
+    const keys = parseGeminiKeysFromEnv();
+    assert.strictEqual(keys.length, 3);
+  } finally {
+    process.env.GEMINI_API_KEY = prev.GEMINI_API_KEY;
+    process.env.GEMINI_API_KEYS = prev.GEMINI_API_KEYS;
+  }
+});
+test('parseGeminiKeysFromEnv dedupes', () => {
+  const prev = {
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+    GEMINI_API_KEYS: process.env.GEMINI_API_KEYS,
+  };
+  process.env.GEMINI_API_KEY = 'key-a';
+  process.env.GEMINI_API_KEYS = 'key-b,key-a';
+  try {
+    const keys = parseGeminiKeysFromEnv();
+    assert.strictEqual(keys.length, 2);
+    assert.ok(keys.includes('key-a'));
+    assert.ok(keys.includes('key-b'));
+  } finally {
+    process.env.GEMINI_API_KEY = prev.GEMINI_API_KEY;
+    process.env.GEMINI_API_KEYS = prev.GEMINI_API_KEYS;
+  }
+});
+test('GeminiKeyPool daily reset clears failed', () => {
+  const statePath = require('path').join(__dirname, '..', 'logs', 'test-gemini-pool.json');
+  const prevKeys = process.env.GEMINI_API_KEYS;
+  process.env.GEMINI_API_KEYS = 'k1,k2';
+  delete process.env.GEMINI_API_KEY;
+  try {
+    require('fs').mkdirSync(require('path').dirname(statePath), { recursive: true });
+    require('fs').writeFileSync(
+      statePath,
+      JSON.stringify({ resetDate: '2000-01-01', failed: { '0': { failedAt: 'x', reason: 'quota' } } })
+    );
+    const pool = new GeminiKeyPool({ statePath });
+    const status = pool.getStatus();
+    assert.strictEqual(status.available, 2);
+    assert.strictEqual(status.failed, 0);
+  } finally {
+    process.env.GEMINI_API_KEYS = prevKeys;
+    try {
+      require('fs').unlinkSync(statePath);
+    } catch {
+      /* ignore */
+    }
+  }
+});
+
 console.log('\n=== AIService reply required includes ===');
 const AIService = require('../src/ai');
 const aiTest = new AIService(config);

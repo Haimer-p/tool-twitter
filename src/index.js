@@ -81,9 +81,12 @@ function askQuestion(query) {
   });
 }
 
+const { parseGeminiKeysFromEnv } = require('./geminiKeyPool');
+
 function validateEnv() {
-  if (!process.env.GEMINI_API_KEY && !process.env.DEEPSEEK_API_KEY) {
-    logger.error('Need at least one: GEMINI_API_KEY or DEEPSEEK_API_KEY in .env');
+  const hasGemini = parseGeminiKeysFromEnv().length > 0;
+  if (!hasGemini && !process.env.DEEPSEEK_API_KEY) {
+    logger.error('Need at least one: GEMINI_API_KEY / GEMINI_API_KEYS or DEEPSEEK_API_KEY in .env');
     logger.info('Gemini: https://aistudio.google.com/app/apikey');
     logger.info('DeepSeek: https://platform.deepseek.com/api_keys');
     process.exit(1);
