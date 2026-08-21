@@ -144,13 +144,22 @@ function loadCampaignFromDb(database, campaignId, globalConfig = require('../con
 
     const accounts = (raw.accounts || [])
       .filter((acc) => acc.name)
-      .map((acc) =>
-        resolveAccountProfile(
+      .map((acc) => {
+        const profile = resolveAccountProfile(
           { ...acc, enabled: acc.enabled !== false },
           defaults,
           globalConfig
-        )
-      )
+        );
+        return {
+          ...profile,
+          publishingContext: {
+            campaign: raw.name,
+            symbol: raw.symbol,
+            dexUrl: raw.dexUrl,
+            mintAddress: raw.mintAddress,
+          },
+        };
+      })
       .filter((acc) => acc.enabled !== false);
 
     if (accounts.length === 0) {

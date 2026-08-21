@@ -146,6 +146,9 @@ class AuthManager {
     while (Date.now() - startedAt < timeoutMs) {
       if (await this.isLoggedInOnPage(page)) return true;
 
+      const loginIssue = await this.getLoginIssue(page);
+      if (loginIssue) throw this.createLoginIssueError(loginIssue);
+
       if (await this.isHumanVerificationPage(page)) {
         if (Date.now() - lastHumanLog > 20000) {
           logger.info(
@@ -235,12 +238,149 @@ class AuthManager {
     }
   }
 
+  async getLoginCredentials(accountName, suppliedCredentials) {
+    if (suppliedCredentials?.username && suppliedCredentials?.password) {
+      return suppliedCredentials;
+    }
+    if (!this.database?.connected || !this.database.getAccountCredentials) return null;
+    try {
+      const stored = await this.database.getAccountCredentials(accountName);
+      return stored?.username && stored?.password
+        ? { username: stored.username, password: stored.password }
+        : null;
+    } catch (error) {
+      logger.warn(`${accountName}: could not load stored credentials: ${error.message}`);
+      return null;
+    }
+  }
+
+  async clickFlowButton(page, labels) {
+    return page.evaluate((wantedLabels) => {
+      const normalized = wantedLabels.map((label) => label.toLowerCase());
+      const candidates = Array.from(
+        document.querySelectorAll('button, [role="button"], input[type="submit"]')
+      );
+      const button = candidates.find((node) => {
+        const text = (node.innerText || node.value || node.getAttribute('aria-label') || '')
+          .trim()
+          .toLowerCase();
+        return normalized.includes(text);
+      });
+      if (!button) return false;
+      button.click();
+      return true;
+    }, labels);
+  }
+
+  classifyLoginIssueText(value) {
+    const text = String(value || '').replace(/\s+/g, ' ').toLowerCase();
+    if (text.includes("we've temporarily limited your login") || text.includes('temporarily limited your login')) {
+      return {
+        code: 'X_LOGIN_RATE_LIMITED',
+        message: 'X temporarily limited this login. Stop retrying and wait before trying again from a stable connection.',
+      };
+    }
+    if (text.includes('could not find your account') || text.includes('enter a valid phone number')) {
+      return { code: 'X_LOGIN_IDENTIFIER_REJECTED', message: 'X rejected the username/email identifier.' };
+    }
+    if (text.includes('wrong password') || text.includes('incorrect password')) {
+      return { code: 'X_LOGIN_PASSWORD_REJECTED', message: 'X rejected the password.' };
+    }
+    return null;
+  }
+
+  async getLoginIssue(page) {
+    const state = await page
+      .evaluate(() => ({
+        text: document.body?.innerText || '',
+        url: window.location.href,
+      }))
+      .catch(() => ({ text: '', url: page.url() }));
+    if (
+      /[?&]failedScript=/i.test(state.url) ||
+      /privacy related extensions may cause issues/i.test(state.text)
+    ) {
+      return {
+        code: 'X_LOGIN_SCRIPT_LOAD_FAILED',
+        message: `X login vendor script failed to load through the current proxy/CDN (${state.url})`,
+      };
+    }
+    return this.classifyLoginIssueText(state.text);
+  }
+
+  createLoginIssueError(issue) {
+    const error = new Error(issue.message);
+    error.code = issue.code;
+    return error;
+  }
+
+  /**
+   * Submit the normal X username/password flow. Any unusual identifier check,
+   * CAPTCHA, 2FA or security challenge remains visible for the user to finish.
+   */
+  async submitCredentials(page, accountName, credentials) {
+    if (!credentials?.username || !credentials?.password) return false;
+    try {
+      const usernameInput = await page.waitForSelector(
+        'input[autocomplete="username"], input[name="text"]',
+        { visible: true, timeout: 20000 }
+      );
+      await usernameInput.click({ clickCount: 3 });
+      await usernameInput.type(credentials.username, { delay: 70 });
+
+      const clickedNext = await this.clickFlowButton(page, ['Next', 'Tiếp theo']);
+      if (!clickedNext) {
+        logger.warn(`${accountName}: X login Next button was not found; waiting for manual input`);
+        return false;
+      }
+
+      let passwordInput = null;
+      const passwordDeadline = Date.now() + 20000;
+      while (!passwordInput && Date.now() < passwordDeadline) {
+        const issue = await this.getLoginIssue(page);
+        if (issue) throw this.createLoginIssueError(issue);
+        passwordInput = await page.$(
+          'input[name="password"], input[autocomplete="current-password"]'
+        );
+        if (!passwordInput) await sleep(500);
+      }
+      if (!passwordInput) {
+        logger.warn(
+          `${accountName}: X requested an extra identifier/security step; finish it manually`
+        );
+        return false;
+      }
+
+      await passwordInput.click({ clickCount: 3 });
+      await passwordInput.type(credentials.password, { delay: 70 });
+      const clickedLogin = await this.clickFlowButton(page, [
+        'Log in',
+        'Login',
+        'Đăng nhập',
+      ]);
+      if (!clickedLogin) {
+        logger.warn(`${accountName}: X login submit button was not found; waiting manually`);
+        return false;
+      }
+      logger.info(`${accountName}: username/password submitted; waiting for X verification`);
+      return true;
+    } catch (error) {
+      if (String(error.code || '').startsWith('X_LOGIN_')) throw error;
+      logger.warn(`${accountName}: automatic credential entry unavailable: ${error.message}`);
+      return false;
+    }
+  }
+
   async login(page, accountName, options = {}) {
     const mode = options.mode || 'terminal'; // terminal | dashboard | health_check
     const manualTimeoutMs = options.manualTimeoutMs || 300000;
     const navTimeoutMs = options.navigationTimeoutMs || 90000;
     const cookies = await this.loadCookies(accountName);
+    const credentials = options.useStoredCredentials === false
+      ? null
+      : await this.getLoginCredentials(accountName, options.credentials);
 
+    // 1) Try cookies first
     if (cookies && cookies.length > 0) {
       await page.setCookie(...cookies);
       await this.gotoWithTimeout(page, `${this.baseUrl}/home`, navTimeoutMs);
@@ -252,17 +392,33 @@ class AuthManager {
         logger.info(`${accountName}: logged in via cookies`);
         return true;
       }
-      logger.warn(`${accountName}: cookies expired, manual login required`);
-      if (mode === 'health_check') return false;
-    } else if (mode === 'health_check') {
+      logger.warn(`${accountName}: cookies expired or invalid, opening browser for login...`);
+      if (mode === 'health_check' && !credentials) return false;
+    } else if (mode === 'health_check' && !credentials) {
       logger.warn(`${accountName}: no cookie file`);
       return false;
     }
 
-    logger.info(`${accountName}: please log in manually in the browser`);
-    await this.gotoWithTimeout(page, `${this.baseUrl}/login`, navTimeoutMs);
+    // 2) Manual login in browser
+    logger.info(`${accountName}: Opening login page in browser...`);
+    try {
+      await this.gotoWithTimeout(page, `${this.baseUrl}/i/flow/login`, navTimeoutMs);
+    } catch {
+      await this.gotoWithTimeout(page, `${this.baseUrl}/login`, navTimeoutMs);
+    }
+
+    await sleep(1500);
+    const pageIssue = await this.getLoginIssue(page);
+    if (pageIssue) throw this.createLoginIssueError(pageIssue);
+
+    if (credentials) {
+      await this.submitCredentials(page, accountName, credentials);
+    } else {
+      logger.info(`${accountName}: no stored credentials; waiting for manual login`);
+    }
+
     logger.info(
-      `${accountName}: waiting for manual login (${Math.round(manualTimeoutMs / 1000)}s) — no need to press Enter`
+      `${accountName}: waiting for manual login (${Math.round(manualTimeoutMs / 1000)}s) — please enter credentials in the opened browser window`
     );
     const done = await this.waitForManualLogin(page, manualTimeoutMs);
     if (!done) {
@@ -286,7 +442,7 @@ class AuthManager {
     const newCookies = await page.cookies();
     await this.saveCookies(accountName, newCookies);
     if (loggedIn) {
-      logger.info(`${accountName}: cookies saved`);
+      logger.info(`${accountName}: login success, cookies saved!`);
     } else {
       logger.warn(`${accountName}: cookies saved (account suspended — dùng cho appeal)`);
     }

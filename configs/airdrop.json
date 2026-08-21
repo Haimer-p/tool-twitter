@@ -1,0 +1,129 @@
+{
+  "parallel": {
+    "maxConcurrent": 1
+  },
+  "defaults": {
+    "keywords": [
+      "solana airdrop",
+      "sol airdrop",
+      "airdrop solana",
+      "solana airdrop claim",
+      "solana airdrop reward",
+      "solana reward claim",
+      "solana ecosystem rewards",
+      "solana retroactive airdrop",
+      "solana points reward",
+      "solana defi airdrop",
+      "solana community airdrop",
+      "solana holder reward",
+      "solana airdrop snapshot",
+      "solana airdrop checker",
+      "solana airdrop today",
+      "solana airdrop live",
+      "new solana airdrop",
+      "latest solana rewards",
+      "claim sol reward",
+      "free solana tokens",
+      "jupiter airdrop",
+      "jupiter reward claim",
+      "jup airdrop claim",
+      "raydium airdrop",
+      "raydium reward claim",
+      "kamino airdrop",
+      "kamino reward claim",
+      "drift solana airdrop",
+      "jito solana rewards",
+      "meteora airdrop reward",
+      "sanctum solana airdrop",
+      "marginfi solana rewards",
+      "tensor solana airdrop",
+      "magic eden solana rewards",
+      "orca solana airdrop",
+      "phantom solana rewards",
+      "backpack solana airdrop",
+      "pyth solana reward claim",
+      "solana quest rewards",
+      "solana bounty rewards"
+    ],
+    "delays": {
+      "betweenActions": { "min": 60000, "max": 120000 },
+      "betweenSearchRounds": { "min": 300000, "max": 600000 }
+    },
+    "interactions": {
+      "maxPerDay": 9999,
+      "maxPerAccountPerRun": 9999,
+      "keywordsPerRun": 20,
+      "tweetsPerKeyword": 15,
+      "followMinFollowers": 0,
+      "followMaxFollowers": 0,
+      "replyMaxLength": 275,
+      "replyComposerTimeoutMs": 15000,
+      "replyPostTimeoutMs": 20000,
+      "replyRequiredIncludes": [],
+      "comboRatios": {
+        "like": 0,
+        "retweet": 0,
+        "reply": 1,
+        "follow": 0,
+        "like_retweet": 0,
+        "like_reply": 0,
+        "like_retweet_reply": 0,
+        "like_follow": 0,
+        "like_retweet_follow": 0
+      }
+    }
+  },
+  "accounts": [
+    {
+      "name": "serimhpt",
+      "enabled": true,
+      "keywords": [
+        "solana airdrop",
+        "sol airdrop",
+        "airdrop solana",
+        "solana airdrop claim",
+        "solana airdrop reward",
+        "solana reward claim",
+        "solana ecosystem rewards",
+        "solana retroactive airdrop",
+        "solana points reward",
+        "solana defi airdrop",
+        "solana community airdrop",
+        "solana holder reward",
+        "solana airdrop snapshot",
+        "solana airdrop checker",
+        "solana airdrop today",
+        "solana airdrop live",
+        "new solana airdrop",
+        "latest solana rewards",
+        "claim sol reward",
+        "free solana tokens",
+        "jupiter airdrop",
+        "jupiter reward claim",
+        "jup airdrop claim",
+        "raydium airdrop",
+        "raydium reward claim",
+        "kamino airdrop",
+        "kamino reward claim",
+        "drift solana airdrop",
+        "jito solana rewards",
+        "meteora airdrop reward",
+        "sanctum solana airdrop",
+        "marginfi solana rewards",
+        "tensor solana airdrop",
+        "magic eden solana rewards",
+        "orca solana airdrop",
+        "phantom solana rewards",
+        "backpack solana airdrop",
+        "pyth solana reward claim",
+        "solana quest rewards",
+        "solana bounty rewards"
+      ],
+      "interactions": {
+        "replyRequiredIncludes": [
+          "BbCqBPtnvv3BYsGQRjuiNEDFbRXSMxkrCYmuPQcT5nUq"
+        ]
+      }
+    }
+  ]
+}

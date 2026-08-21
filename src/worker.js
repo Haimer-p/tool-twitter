@@ -10,6 +10,7 @@ const AuthManager = require('./auth');
 const AIService = require('./ai');
 const Database = require('./database');
 const EngagementBot = require('./engage');
+const ProxyPool = require('./proxyPool');
 const {
   loadAccountConfig,
   loadCampaignFromDb,
@@ -49,6 +50,7 @@ const RUN_PROFILES = {
 };
 
 let database = null;
+let proxyPool = null;
 let bot = null;
 let botRunning = false;
 let stopRequested = false;
@@ -75,6 +77,29 @@ function applyRunProfile(accounts, runProfile) {
   });
 }
 
+function applyRunOptions(accounts, runOptions = {}) {
+  const commentTyping = runOptions.typing?.comment;
+  return accounts.map((account) => ({
+    ...account,
+    delays: {
+      ...account.delays,
+      typing: commentTyping?.min != null && commentTyping?.max != null
+        ? { min: commentTyping.min, max: commentTyping.max }
+        : account.delays?.typing,
+    },
+    publishing: {
+      ...(runOptions.publishing || {}),
+      typing: runOptions.typing?.post || { min: 70, max: 170 },
+    },
+  }));
+}
+
+function normalizeConcurrency(value, profileCount, fallback = 2) {
+  const parsed = Number(value);
+  const safe = Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+  return Math.max(1, Math.min(10, Math.max(1, profileCount), safe));
+}
+
 async function resolveProfiles(cmd) {
   const useBatch =
     (Array.isArray(cmd.campaignIds) && cmd.campaignIds.length > 0) ||
@@ -86,8 +111,11 @@ async function resolveProfiles(cmd) {
       configFiles: cmd.configFiles || (cmd.configFile ? [cmd.configFile] : []),
       accountNames: cmd.accountNames,
     });
-    let profiles = applyRunProfile(batch.profiles, cmd.runProfile || 'vua');
-    const maxConcurrent = Math.min(
+    let profiles = applyRunOptions(
+      applyRunProfile(batch.profiles, cmd.runProfile || 'vua'),
+      cmd.runOptions
+    );
+    const maxConcurrent = normalizeConcurrency(
       cmd.maxConcurrentOverride ??
         parseInt(process.env.MAX_PARALLEL_ACCOUNTS || '2', 10),
       profiles.length
@@ -103,21 +131,41 @@ async function resolveProfiles(cmd) {
   if (cmd.campaignId) {
     const loaded = await loadCampaignFromDb(database, cmd.campaignId, config);
     if (!loaded) throw new Error(`Campaign not found: ${cmd.campaignId}`);
-    let profiles = applyRunProfile(loaded.accounts, cmd.runProfile || 'vua');
+    let profiles = applyRunOptions(
+      applyRunProfile(loaded.accounts, cmd.runProfile || 'vua'),
+      cmd.runOptions
+    );
     if (cmd.accountNames?.length) {
       profiles = filterAccountsByName(profiles, cmd.accountNames);
     }
-    return { profiles, maxConcurrent: loaded.parallel?.maxConcurrent || 2, source: loaded.sourceName };
+    return {
+      profiles,
+      maxConcurrent: normalizeConcurrency(
+        cmd.maxConcurrentOverride ?? loaded.parallel?.maxConcurrent,
+        profiles.length
+      ),
+      source: loaded.sourceName,
+    };
   }
 
   if (cmd.configFile) {
     const loaded = loadAccountConfig(config, { configFile: cmd.configFile });
     if (!loaded) throw new Error(`Config not found: ${cmd.configFile}`);
-    let profiles = applyRunProfile(loaded.accounts, cmd.runProfile || 'vua');
+    let profiles = applyRunOptions(
+      applyRunProfile(loaded.accounts, cmd.runProfile || 'vua'),
+      cmd.runOptions
+    );
     if (cmd.accountNames?.length) {
       profiles = filterAccountsByName(profiles, cmd.accountNames);
     }
-    return { profiles, maxConcurrent: loaded.parallel?.maxConcurrent || 2, source: loaded.sourceName };
+    return {
+      profiles,
+      maxConcurrent: normalizeConcurrency(
+        cmd.maxConcurrentOverride ?? loaded.parallel?.maxConcurrent,
+        profiles.length
+      ),
+      source: loaded.sourceName,
+    };
   }
 
   throw new Error('Command missing campaignId or configFile');
@@ -137,6 +185,7 @@ async function runBot(profiles, maxConcurrent, meta = {}) {
     activeSources: meta.activeSources || [],
     maxConcurrentOverride: maxConcurrent,
     runProfile: meta.runProfile || 'vua',
+    runOptions: meta.runOptions || {},
     startedAt: new Date(),
     activeAccounts: profiles.map((p) => p.name),
     stopping: false,
@@ -147,7 +196,7 @@ async function runBot(profiles, maxConcurrent, meta = {}) {
     : meta.source || 'batch';
   logger.info(`Worker bot started (${profiles.length} accounts) sources: ${sourceLabel}`);
   try {
-    await bot.runParallelAccounts(profiles, maxConcurrent);
+    await bot.runParallelAccounts(profiles, maxConcurrent, proxyPool);
   } catch (error) {
     logger.error(`Worker bot error: ${error.message}`);
     throw error;
@@ -161,6 +210,7 @@ async function runBot(profiles, maxConcurrent, meta = {}) {
       campaignIds: [],
       configFiles: [],
       activeSources: [],
+      runOptions: {},
     });
     logger.info('Worker bot finished');
   }
@@ -170,13 +220,28 @@ async function handleStart(cmd) {
   const resolved = await resolveProfiles(cmd);
   const { profiles, maxConcurrent, source, batchMeta } = resolved;
   if (!profiles.length) throw new Error('No accounts to run');
+
+  // Load credentials for each account from DB
+  const profilesWithCreds = await Promise.all(
+    profiles.map(async (p) => {
+      try {
+        const creds = await database.getAccountCredentials(p.name);
+        if (creds?.username && creds?.password) {
+          return { ...p, credentials: { username: creds.username, password: creds.password } };
+        }
+      } catch { /* ignore */ }
+      return p;
+    })
+  );
+
   logger.info(`Start batch: ${source}, profile: ${cmd.runProfile || 'vua'}, concurrent: ${maxConcurrent}`);
-  await runBot(profiles, maxConcurrent, {
+  await runBot(profilesWithCreds, maxConcurrent, {
     campaignId: cmd.campaignId || null,
     campaignIds: batchMeta?.sources?.filter((s) => s.type === 'campaign').map((s) => s.campaignId) || (cmd.campaignId ? [cmd.campaignId] : []),
     configFiles: batchMeta?.sources?.filter((s) => s.type === 'file').map((s) => s.path) || cmd.configFiles || [],
     activeSources: batchMeta?.sources || [],
     runProfile: cmd.runProfile,
+    runOptions: cmd.runOptions || {},
     source,
   });
 }
@@ -218,6 +283,7 @@ async function closeManualLoginSession(reason = 'manual') {
   if (!manualLoginSession) return;
   const { browserManager, accountName } = manualLoginSession;
   manualLoginSession = null;
+  await database?.setAccountProxyUsage?.(accountName, null, false).catch(() => {});
   try {
     await browserManager.close();
     logger.info(`Manual login browser closed (${accountName}, reason=${reason})`);
@@ -226,7 +292,14 @@ async function closeManualLoginSession(reason = 'manual') {
   }
 }
 
-async function handleLoginAccount(cmd) {
+function isProxyRelatedLoginError(error) {
+  return error?.code === 'X_LOGIN_SCRIPT_LOAD_FAILED' ||
+    /proxy|connect|ECONNRESET|tunnel|ERR_TIMED_OUT|ERR_CONNECTION|ERR_NAME_NOT_RESOLVED/i.test(
+      error?.message || ''
+    );
+}
+
+async function handleLoginAccount(cmd, proxyRetry = 0) {
   const accountName = cmd.accountNames?.[0];
   if (!accountName) throw new Error('accountNames[0] required for login_account');
   if (!authManager) throw new Error('Auth manager not initialized');
@@ -242,30 +315,72 @@ async function handleLoginAccount(cmd) {
 
   await closeManualLoginSession('replace');
 
-  const browserManager = new BrowserManager(config);
-  await browserManager.launch({ headless: false, captchaFriendly: true });
+  const assignedProxy = proxyPool?.enabled
+    ? await proxyPool.getForAccount(accountName)
+    : null;
+  const browserConfig = assignedProxy
+    ? { ...config, browser: { ...config.browser, proxy: assignedProxy.url } }
+    : config;
+  const browserManager = new BrowserManager(browserConfig);
+  const safeProfileName = accountName.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const userDataDir = path.join(process.cwd(), 'accounts', 'browser-profiles', safeProfileName);
+  try {
+    await browserManager.launch({
+      headless: false,
+      captchaFriendly: true,
+      launchOptions: { userDataDir },
+    });
+  } catch (error) {
+    if (assignedProxy && isProxyRelatedLoginError(error)) {
+      await proxyPool.markDeadAndGetNext(accountName, assignedProxy._id, error.message);
+      if (proxyRetry < 1) {
+        logger.warn(`[${accountName}] Retrying login browser once with a replacement proxy`);
+        return handleLoginAccount(cmd, proxyRetry + 1);
+      }
+    }
+    throw error;
+  }
   const page = await browserManager.newPage();
+  await database.setAccountProxyUsage(accountName, assignedProxy, true);
 
   let disconnected = false;
   browserManager.browser?.once('disconnected', () => {
     disconnected = true;
     if (manualLoginSession?.browserManager === browserManager) {
       manualLoginSession = null;
+      database.setAccountProxyUsage(accountName, null, false).catch(() => {});
       logger.info(`Manual login browser disconnected (${accountName})`);
     }
   });
 
-  const loggedIn = await authManager.login(page, accountName, {
-    mode: 'dashboard',
-    manualTimeoutMs: 15 * 60 * 1000,
-  });
+  const credentials = await database.getAccountCredentials(accountName);
+  let loggedIn = false;
+  try {
+    loggedIn = await authManager.login(page, accountName, {
+      mode: 'dashboard',
+      manualTimeoutMs: 15 * 60 * 1000,
+      credentials,
+    });
+  } catch (error) {
+    await database.setAccountProxyUsage(accountName, null, false).catch(() => {});
+    await browserManager.close().catch(() => {});
+    if (assignedProxy && isProxyRelatedLoginError(error)) {
+      await proxyPool.markDeadAndGetNext(accountName, assignedProxy._id, error.message);
+      if (proxyRetry < 1) {
+        logger.warn(`[${accountName}] Retrying login once with a replacement proxy`);
+        return handleLoginAccount(cmd, proxyRetry + 1);
+      }
+    }
+    throw error;
+  }
 
   if (!loggedIn || disconnected) {
+    await database.setAccountProxyUsage(accountName, null, false).catch(() => {});
     await browserManager.close().catch(() => {});
     throw new Error(`Login failed or timed out for ${accountName}`);
   }
 
-  manualLoginSession = { browserManager, page, accountName };
+  manualLoginSession = { browserManager, page, accountName, assignedProxy };
   return { ok: true, accountName, keptOpen: true };
 }
 
@@ -375,6 +490,16 @@ async function processCommand(cmd) {
     } else if (cmd.action === 'appeal_captcha_done') {
       const result = handleAppealCaptchaDone();
       await database.finishCommand(cmd._id, result);
+    } else if (cmd.action === 'test_proxies') {
+      if (botRunning) throw new Error('Bot is running — stop it before testing proxies');
+      if (!proxyPool) throw new Error('ProxyPool not initialized');
+      const results = await proxyPool.testAll();
+      await database.finishCommand(cmd._id, { results, count: results?.length || 0 });
+    } else if (cmd.action === 'test_new_proxies') {
+      if (botRunning) throw new Error('Bot is running - stop it before testing proxies');
+      if (!proxyPool) throw new Error('ProxyPool not initialized');
+      const results = await proxyPool.testAll({ statuses: ['untested'] });
+      await database.finishCommand(cmd._id, { results, count: results?.length || 0 });
     } else {
       await database.finishCommand(cmd._id, null, `Unknown action: ${cmd.action}`);
     }
@@ -462,6 +587,10 @@ async function main() {
   );
   const aiService = new AIService(config);
   bot = new EngagementBot(browserManager, authManager, aiService, database, config);
+
+  // Initialize proxy pool
+  proxyPool = new ProxyPool(database);
+  await proxyPool.init();
 
   await database.upsertBotRuntime(WORKER_ID, { running: false, lastHeartbeat: new Date() });
   heartbeatTimer = setInterval(heartbeat, 30000);

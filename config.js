@@ -47,7 +47,7 @@ module.exports = {
   browser: {
     headless: process.env.BROWSER_HEADLESS === 'true',
     userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     viewport: { width: 1280, height: 800 },
     proxy: process.env.PROXY_SERVER || null,
     navigationTimeout: parseInt(process.env.NAVIGATION_TIMEOUT || '60000', 10),

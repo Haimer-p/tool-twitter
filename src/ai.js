@@ -246,7 +246,7 @@ Return ONLY the reply text.
     });
   }
 
-  async generateDeepSeek(prompt) {
+  async generateDeepSeek(prompt, options = {}) {
     if (!this.deepseekKey) throw new Error('DeepSeek API key not configured');
 
     const { baseUrl, model, temperature, maxTokens } = this.config.deepseek;
@@ -260,7 +260,7 @@ Return ONLY the reply text.
         model,
         messages: [{ role: 'user', content: prompt }],
         temperature,
-        max_tokens: maxTokens,
+        max_tokens: options.maxTokens || maxTokens,
       }),
     });
 
@@ -326,6 +326,114 @@ Return ONLY the reply text.
 
     logger.error('All AI providers failed — using fallback reply');
     return this.finalizeReply(this.fallbackReply(tweetText), replyOptions);
+  }
+
+  splitThreadTextDetailed(text, maxLength = 260, maxParts = 4) {
+    const clean = String(text || '')
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+    if (!clean) return { parts: [], truncated: false };
+
+    let candidates = [];
+    let invalid = false;
+    try {
+      const parsed = JSON.parse(clean);
+      candidates = Array.isArray(parsed) ? parsed : parsed?.parts;
+      if (Array.isArray(candidates) && candidates.some((item) => typeof item !== 'string')) {
+        invalid = true;
+        candidates = candidates.filter((item) => typeof item === 'string');
+      }
+    } catch {
+      candidates = clean.split(/\n\s*(?:---+|\[PART\]|PART\s+\d+:?)\s*\n|\n{2,}/i);
+    }
+    if (!Array.isArray(candidates)) candidates = [clean];
+
+    const output = [];
+    let truncated = invalid;
+    const addChunk = (value) => {
+      let remaining = String(value || '')
+        .replace(/^(?:[-*]\s+|\d+[.)]\s+)/, '')
+        .trim();
+      while (remaining && output.length < maxParts) {
+        const points = Array.from(remaining);
+        if (points.length <= maxLength) {
+          output.push(remaining);
+          remaining = '';
+          break;
+        }
+        const windowPoints = points.slice(0, maxLength + 1);
+        let cut = -1;
+        for (let index = Math.min(maxLength, windowPoints.length - 1); index >= 0; index--) {
+          if (/\s/.test(windowPoints[index])) {
+            cut = index;
+            break;
+          }
+        }
+        if (cut < Math.floor(maxLength * 0.55)) cut = maxLength;
+        output.push(windowPoints.slice(0, cut + 1).join('').trim());
+        remaining = windowPoints.slice(cut + 1).join('').concat(points.slice(maxLength + 1).join('')).trim();
+      }
+      if (remaining) truncated = true;
+    };
+    for (let index = 0; index < candidates.length; index++) {
+      if (output.length >= maxParts) {
+        if (candidates.slice(index).some((item) => String(item || '').trim())) truncated = true;
+        break;
+      }
+      addChunk(candidates[index]);
+    }
+    return { parts: output.filter(Boolean).slice(0, maxParts), truncated };
+  }
+
+  splitThreadText(text, maxLength = 260, maxParts = 4) {
+    return this.splitThreadTextDetailed(text, maxLength, maxParts).parts;
+  }
+
+  async generatePostThread({ topic, context = '', maxParts = 4, maxLength = 260 } = {}) {
+    const subject = String(topic || '').trim();
+    const prompt = `
+Write an original Twitter/X post or short thread.
+
+Topic/instruction: ${subject || 'Share a useful observation about crypto, Web3, or the supplied context.'}
+${context ? `Campaign/account context: ${context}` : ''}
+
+Rules:
+- Return a JSON array of strings only, for example ["first post", "continuation"]
+- Use between 1 and ${maxParts} parts; each part must be at most ${maxLength} characters
+- Part 1 must stand alone and introduce the idea; later parts must continue it naturally
+- Be factual and conversational; do not invent prices, partnerships, returns, or announcements
+- No engagement bait, mass mentions, repeated links, hashtag stuffing, or promises of profit
+- At most 2 relevant hashtags across the whole thread
+- Do not add labels such as Part 1 or Thread
+`.trim();
+
+    const providers = this.getProviderOrder();
+    if (!providers.length) {
+      logger.error('No AI provider configured for post generation');
+      return [];
+    }
+
+    for (const provider of providers) {
+      try {
+        const raw = provider === 'gemini'
+          ? await this.generateGemini(prompt)
+          : await this.generateDeepSeek(prompt, { maxTokens: 800 });
+        const parsed = this.splitThreadTextDetailed(raw, maxLength, maxParts);
+        if (parsed.truncated) {
+          logger.warn(`${provider} returned a thread that would be truncated; trying another provider`);
+          continue;
+        }
+        if (parsed.parts.length) {
+          logger.info(`AI post thread via ${provider}: ${parsed.parts.length} part(s)`);
+          return parsed.parts;
+        }
+      } catch (error) {
+        logger.warn(`${provider} post generation failed: ${error.message?.slice(0, 120)}`);
+      }
+    }
+    logger.error('All AI providers failed for post generation');
+    return [];
   }
 
   buildAppealPrompt({ username, suspendReason, accountName, language = 'en' }) {

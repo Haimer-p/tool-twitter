@@ -149,9 +149,25 @@ class EngagementBot {
     await page.keyboard.press('KeyA');
     await page.keyboard.up('Control');
     await page.keyboard.press('Backspace');
-    await page.keyboard.type(text, {
-      delay: randomMs(typing.min, typing.max),
-    });
+    const minDelay = Math.max(0, Number(typing.min) || 0);
+    const maxDelay = Math.max(minDelay, Number(typing.max) || minDelay);
+    const characters = Array.from(text);
+    let nextPauseAt = randomMs(24, 48);
+    for (let index = 0; index < characters.length; index++) {
+      if (!this.isActive()) return false;
+      const char = characters[index];
+      if (char === '\n') {
+        await page.keyboard.press('Enter');
+      } else {
+        await page.keyboard.sendCharacter(char);
+      }
+      await sleep(randomMs(minDelay, maxDelay + 1));
+      if (index + 1 >= nextPauseAt && index + 1 < characters.length) {
+        await sleep(randomMs(180, 750));
+        nextPauseAt += randomMs(24, 48);
+      }
+    }
+    return true;
   }
 
   getReplyOptions(ctx) {
@@ -479,11 +495,9 @@ class EngagementBot {
     await sleep(300);
     await this.clearReplyComposer(page);
 
-    const fastCtx = {
-      ...ctx,
-      delays: { ...ctx.delays, typing: { min: 15, max: 35 } },
-    };
-    await this.humanType(page, SELECTORS.replyBox, text, fastCtx);
+    if (!(await this.humanType(page, SELECTORS.replyBox, text, ctx))) {
+      throw new Error('Bot stopped during typing');
+    }
 
     let len = await this.getComposerTextLength(page);
     const expectedLen = text.length;
@@ -493,7 +507,9 @@ class EngagementBot {
         `[${ctx.accountName}] Composer text too long (${len} chars, expected ~${expectedLen}) — clear and retype once`
       );
       await this.clearReplyComposer(page);
-      await this.humanType(page, SELECTORS.replyBox, text, fastCtx);
+      if (!(await this.humanType(page, SELECTORS.replyBox, text, ctx))) {
+        throw new Error('Bot stopped during typing');
+      }
       len = await this.getComposerTextLength(page);
     }
 
@@ -604,31 +620,391 @@ class EngagementBot {
   async postReply(page, ctx) {
     const { post } = this.getReplyTimeouts(ctx);
 
-    let btn = await this.waitForEnabledPostButton(page, post);
-    if (btn) {
-      await btn.click();
-      await sleep(800);
-      if (await this.confirmReplyPosted(page, 10000)) return true;
-    }
+    if (!this.isActive()) return false;
+    const btn = await this.waitForEnabledPostButton(page, post);
+    if (!btn || !this.isActive()) return false;
+    await btn.click();
+    await sleep(800);
+    if (await this.confirmReplyPosted(page, 10000)) return true;
+    if ((await this.getComposerTextLength(page)) === 0) return true;
 
-    await this.nudgeComposerReact(page);
-    btn = await this.waitForEnabledPostButton(page, 5000);
-    if (btn) {
-      await btn.click();
-      await sleep(800);
-      if (await this.confirmReplyPosted(page, 10000)) return true;
-    }
-
-    logger.info(`[${ctx.accountName}] Post fallback: Ctrl+Enter`);
-    await page.keyboard.down('Control');
-    await page.keyboard.press('Enter');
-    await page.keyboard.up('Control');
-    await sleep(2000);
-
-    return this.confirmReplyPosted(page, 8000);
+    // A delayed UI confirmation is ambiguous: never click/submit a second time.
+    logger.warn(`[${ctx.accountName}] Reply submit is ambiguous; skip retry to avoid duplicate`);
+    return false;
   }
 
-  async openReplyComposer(page, ctx) {
+  getPublishingContext(accountProfile) {
+    const campaign = accountProfile.publishingContext || {};
+    return [
+      campaign.campaign && `campaign: ${campaign.campaign}`,
+      campaign.symbol && `symbol: ${campaign.symbol}`,
+      campaign.dexUrl && `reference link: ${campaign.dexUrl}`,
+      campaign.mintAddress && `mint address: ${campaign.mintAddress}`,
+      accountProfile.keywords?.length && `keywords: ${accountProfile.keywords.slice(0, 8).join(', ')}`,
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  async getVisibleStatusIds(page) {
+    return page.evaluate(() =>
+      Array.from(document.querySelectorAll('a[href*="/status/"]'))
+        .map((link) => (link.getAttribute('href') || '').match(/\/status\/(\d+)/)?.[1])
+        .filter(Boolean)
+    ).catch(() => []);
+  }
+
+  async findPostedStatusUrl(page, expectedText, timeoutMs = 15000, previousIds = []) {
+    const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    const needle = normalize(expectedText);
+    const oldIds = new Set(previousIds.map(String));
+    try {
+      await page.waitForFunction(
+        (expected, ids) => {
+          const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+          const old = new Set(ids);
+          const toastLink = document.querySelector(
+            '[data-testid="toast"] a[href*="/status/"], [role="alert"] a[href*="/status/"]'
+          );
+          const toastId = (toastLink?.getAttribute('href') || '').match(/\/status\/(\d+)/)?.[1];
+          if (toastId && !old.has(toastId)) return true;
+          return Array.from(document.querySelectorAll('article[data-testid="tweet"]')).some((article) => {
+            const body = article.querySelector('[data-testid="tweetText"]');
+            const timeLink = article.querySelector('a[href*="/status/"] time')?.closest('a');
+            const id = (timeLink?.getAttribute('href') || '').match(/\/status\/(\d+)/)?.[1];
+            return id && !old.has(id) && normalizeText(body?.textContent) === expected;
+          });
+        },
+        { timeout: timeoutMs },
+        needle,
+        [...oldIds]
+      );
+    } catch {
+      // Fall through to a final DOM lookup.
+    }
+
+    return page.evaluate((expected, ids) => {
+      const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+      const old = new Set(ids);
+      const toastLink = document.querySelector(
+        '[data-testid="toast"] a[href*="/status/"], [role="alert"] a[href*="/status/"]'
+      );
+      const toastId = (toastLink?.getAttribute('href') || '').match(/\/status\/(\d+)/)?.[1];
+      if (toastLink?.href && toastId && !old.has(toastId)) return toastLink.href;
+      for (const article of document.querySelectorAll('article[data-testid="tweet"]')) {
+        const body = article.querySelector('[data-testid="tweetText"]');
+        if (normalizeText(body?.textContent) !== expected) continue;
+        const link = article.querySelector('a[href*="/status/"] time')?.closest('a');
+        const id = (link?.getAttribute('href') || '').match(/\/status\/(\d+)/)?.[1];
+        if (link?.href && id && !old.has(id)) return link.href;
+      }
+      return null;
+    }, needle, [...oldIds]).catch(() => null);
+  }
+
+  async publishComposerText(page, text, ctx) {
+    const typing = ctx.delays?.typing || {};
+    logger.info(
+      `[AUTO_POST][${ctx.accountName}] Composer ready: chars=${text.length}, typing=${typing.min ?? '?'}-${typing.max ?? '?'}ms/char`
+    );
+    const previousIds = await this.getVisibleStatusIds(page);
+    const composerTimeout = Math.max(20000, this.getReplyTimeouts(ctx).composer);
+    await page.waitForSelector(SELECTORS.replyBox, {
+      visible: true,
+      timeout: composerTimeout,
+    });
+    if (!(await this.humanType(page, SELECTORS.replyBox, text, ctx))) {
+      throw new Error('Bot stopped during typing');
+    }
+    logger.info(`[AUTO_POST][${ctx.accountName}] Typing completed; waiting for enabled Post button`);
+    await this.randomDelay(600, 1400);
+    const button = await this.waitForEnabledPostButton(page, this.getReplyTimeouts(ctx).post);
+    if (!button) throw new Error('Post button is missing or disabled');
+    if (!this.isActive()) throw new Error('Bot stopped before post submission');
+    logger.info(`[AUTO_POST][${ctx.accountName}] Clicking Post button (single submit)`);
+    await button.click();
+    const posted = await page
+      .waitForFunction(
+        (selector, expected) => {
+          for (const el of document.querySelectorAll('[data-testid="toast"], [role="alert"]')) {
+            const message = (el.textContent || '').toLowerCase();
+            if (message.includes('sent') || message.includes('posted')) return true;
+          }
+          const composer = document.querySelector(selector);
+          const editable =
+            composer?.closest('[contenteditable="true"]') ||
+            composer?.querySelector('[contenteditable="true"]') ||
+            composer;
+          if (editable && !(editable.textContent || '').trim()) return true;
+          return Array.from(document.querySelectorAll('article[data-testid="tweet"]')).some(
+            (article) => {
+              const body = article.querySelector('[data-testid="tweetText"]');
+              return (body?.textContent || '').trim().startsWith(expected);
+            }
+          );
+        },
+        { timeout: 15000 },
+        SELECTORS.replyBox,
+        text.trim().slice(0, 48)
+      )
+      .then(() => true)
+      .catch(() => false);
+    // Do not submit a second time when the first click is ambiguous: that can duplicate a post.
+    if (!posted) {
+      const error = new Error('Post was submitted but X did not confirm it');
+      error.submitted = true;
+      throw error;
+    }
+    logger.info(`[AUTO_POST][${ctx.accountName}] X confirmed the post submission`);
+    const statusUrl = await this.findPostedStatusUrl(page, text, 15000, previousIds);
+    logger.info(
+      `[AUTO_POST][${ctx.accountName}] Status URL ${statusUrl ? `found: ${statusUrl}` : 'not found'}`
+    );
+    return statusUrl;
+  }
+
+  async publishThread(page, accountProfile, ctx) {
+    const settings = accountProfile.publishing || {};
+    if (!settings.enabled || !this.isActive()) {
+      logger.info(
+        `[AUTO_POST][${ctx.accountName}] Skipped before scheduling: enabled=${!!settings.enabled}, botActive=${this.isActive()}`
+      );
+      return { posted: false, skipped: true };
+    }
+
+    const cooldownHours = Math.max(1, Number(settings.cooldownHours) || 12);
+    logger.info(
+      `[AUTO_POST][${ctx.accountName}] Start: cooldown=${cooldownHours}h, maxParts=${settings.maxThreadParts || 4}, topic=${settings.topic ? 'custom' : 'default'}`
+    );
+    const reservation = await this.db.reservePublication(ctx.accountName, cooldownHours, 30);
+    if (!reservation) {
+      logger.info(`[AUTO_POST][${ctx.accountName}] Skipped: cooldown or another publisher lock is active`);
+      return { posted: false, skipped: true, reason: 'cooldown_or_locked' };
+    }
+    const lastPost = null;
+    if (lastPost?.timestamp) {
+      const elapsed = Date.now() - new Date(lastPost.timestamp).getTime();
+      if (elapsed < cooldownHours * 60 * 60 * 1000) {
+        const remainingMinutes = Math.ceil(
+          (cooldownHours * 60 * 60 * 1000 - elapsed) / 60000
+        );
+        logger.info(
+          `[${ctx.accountName}] Skip AI post: cooldown còn khoảng ${remainingMinutes} phút`
+        );
+        return { posted: false, skipped: true, reason: 'cooldown' };
+      }
+    }
+
+    const initial = settings.initialDelayMinutes || { min: 1, max: 5 };
+    const delayMin = Math.max(0, Number(initial.min) || 0) * 60000;
+    const delayMax = Math.max(delayMin, Number(initial.max) || 0) * 60000;
+    if (delayMax > 0) {
+      const delay = randomMs(delayMin, delayMax + 1);
+      logger.info(
+        `[AUTO_POST][${ctx.accountName}] Scheduled delay=${Math.ceil(delay / 1000)}s (range=${Math.ceil(delayMin / 1000)}-${Math.ceil(delayMax / 1000)}s)`
+      );
+      await this.randomDelay(delay, delay + 1);
+    }
+    if (!this.isActive()) {
+      logger.info(`[AUTO_POST][${ctx.accountName}] Cancelled during initial delay because bot stopped`);
+      await this.db.finishPublication(ctx.accountName, { success: false, preSubmitFailure: true });
+      return { posted: false, skipped: true, reason: 'stopped' };
+    }
+
+    const maxParts = Math.max(1, Math.min(8, Number(settings.maxThreadParts) || 4));
+    let parts;
+    try {
+      const aiStartedAt = Date.now();
+      logger.info(`[AUTO_POST][${ctx.accountName}] Requesting AI content (maxParts=${maxParts}, maxChars=260)`);
+      parts = await this.ai.generatePostThread({
+        topic: settings.topic,
+        context: this.getPublishingContext(accountProfile),
+        maxParts,
+        maxLength: 260,
+      });
+      logger.info(
+        `[AUTO_POST][${ctx.accountName}] AI content ready in ${Date.now() - aiStartedAt}ms: parts=${parts.length}, chars=[${parts.map((part) => part.length).join(',')}]`
+      );
+    } catch (error) {
+      logger.error(`[AUTO_POST][${ctx.accountName}] AI generation failed: ${error.message}`);
+      await this.db.finishPublication(ctx.accountName, { success: false, preSubmitFailure: true });
+      throw error;
+    }
+    if (!parts.length) {
+      logger.warn(`[AUTO_POST][${ctx.accountName}] AI returned no publishable post`);
+      await this.db.finishPublication(ctx.accountName, { success: false, preSubmitFailure: true });
+      return { posted: false, skipped: true, reason: 'ai_empty' };
+    }
+    if (!this.isActive()) {
+      await this.db.finishPublication(ctx.accountName, { success: false, preSubmitFailure: true });
+      return { posted: false, skipped: true, reason: 'stopped' };
+    }
+
+    const postCtx = {
+      ...ctx,
+      delays: { ...ctx.delays, typing: settings.typing || { min: 70, max: 170 } },
+      interactions: { ...ctx.interactions, replyMaxLength: 260 },
+    };
+
+    let firstPartConfirmed = false;
+    let postedParts = 0;
+    let currentUrl = null;
+    try {
+      logger.info(`[AUTO_POST][${ctx.accountName}] Opening home composer for thread part 1/${parts.length}`);
+      await this.safeGoto(page, `${this.baseUrl}/home`, ctx, 'open post composer');
+      await this.randomDelay(1200, 2600);
+      if (!this.isActive()) throw new Error('Bot stopped before post submission');
+      await this.db.logActivity({
+        accountName: ctx.accountName,
+        action: 'post_attempt',
+        target: 'x.com/home',
+        details: { content: parts[0], threadParts: parts.length },
+        success: true,
+      });
+      currentUrl = await this.publishComposerText(page, parts[0], postCtx);
+      firstPartConfirmed = true;
+      postedParts = 1;
+      await this.db.finishPublication(ctx.accountName, { success: true });
+      await this.db.logActivity({
+        accountName: ctx.accountName,
+        action: 'post',
+        target: currentUrl || 'x.com/home',
+        details: { content: parts[0], threadParts: parts.length },
+        success: true,
+      });
+      logger.info(`[AUTO_POST][${ctx.accountName}] First post published; requestedParts=${parts.length}`);
+
+      if (parts.length > 1 && !currentUrl) {
+        throw new Error('Posted first part but could not locate its status URL for thread replies');
+      }
+
+      const threadDelay = settings.threadDelaySeconds || { min: 20, max: 45 };
+      for (let index = 1; index < parts.length; index++) {
+        if (!this.isActive()) break;
+        const partDelayMin = Math.max(5, Number(threadDelay.min) || 20) * 1000;
+        const partDelayMax = Math.max(Number(threadDelay.min) || 20, Number(threadDelay.max) || 45) * 1000;
+        logger.info(
+          `[AUTO_POST][${ctx.accountName}] Thread part ${index + 1}/${parts.length} waiting ${Math.ceil(partDelayMin / 1000)}-${Math.ceil(partDelayMax / 1000)}s`
+        );
+        await this.randomDelay(
+          partDelayMin,
+          partDelayMax
+        );
+        if (!this.isActive()) break;
+        await this.safeGoto(page, currentUrl, ctx, `open thread part ${index + 1}`);
+        await this.randomDelay(900, 1800);
+        if (!this.isActive()) break;
+        const previousIds = await this.getVisibleStatusIds(page);
+        const opened = await this.openReplyComposer(page, postCtx, currentUrl);
+        if (!opened) throw new Error(`Could not open composer for thread part ${index + 1}`);
+        logger.info(
+          `[AUTO_POST][${ctx.accountName}] Typing thread reply ${index + 1}/${parts.length}: chars=${parts[index].length}`
+        );
+        const ok = await this.submitReplyOnce(page, parts[index], postCtx);
+        if (!ok) throw new Error(`X did not confirm thread part ${index + 1}`);
+        postedParts += 1;
+        logger.info(`[AUTO_POST][${ctx.accountName}] Thread part ${index + 1}/${parts.length} confirmed`);
+        const nextUrl = await this.findPostedStatusUrl(page, parts[index], 15000, previousIds);
+        await this.db.logActivity({
+          accountName: ctx.accountName,
+          action: 'thread_reply',
+          target: nextUrl || currentUrl,
+          details: { content: parts[index], part: index + 1, totalParts: parts.length },
+          success: true,
+        });
+        if (nextUrl) {
+          currentUrl = nextUrl;
+        } else {
+          logger.warn(
+            `[${ctx.accountName}] Could not locate thread part ${index + 1}; next part will reply to the last known post`
+          );
+        }
+      }
+      if (postedParts < parts.length) {
+        logger.warn(
+          `[AUTO_POST][${ctx.accountName}] Thread incomplete: posted=${postedParts}/${parts.length}, botActive=${this.isActive()}`
+        );
+        await this.db.logActivity({
+          accountName: ctx.accountName,
+          action: 'thread_incomplete',
+          target: currentUrl || 'x.com/home',
+          details: {
+            postedParts,
+            requestedParts: parts.length,
+            reason: this.isActive() ? 'thread_failed' : 'stopped',
+          },
+          success: false,
+        });
+        return {
+          posted: true,
+          postedParts,
+          requestedParts: parts.length,
+          incomplete: true,
+          stopped: !this.isActive(),
+          url: currentUrl,
+        };
+      }
+      logger.info(`[AUTO_POST][${ctx.accountName}] Completed successfully: posted=${postedParts}/${parts.length}`);
+      return { posted: true, postedParts, requestedParts: parts.length, url: currentUrl };
+    } catch (error) {
+      logger.error(
+        `[AUTO_POST][${ctx.accountName}] Failed: posted=${postedParts}/${parts.length}, submitted=${error.submitted === true}, error=${error.message}`
+      );
+      if (!firstPartConfirmed) {
+        await this.db.finishPublication(ctx.accountName, {
+          success: false,
+          preSubmitFailure: error.submitted !== true,
+        });
+      }
+      await this.db.logActivity({
+        accountName: ctx.accountName,
+        action: firstPartConfirmed ? 'thread_incomplete' : 'post_failed',
+        target: currentUrl || ctx.accountName,
+        details: {
+          postedParts,
+          requestedParts: parts.length,
+          ambiguousSubmit: error.submitted === true,
+        },
+        success: false,
+        errorMessage: error.message,
+      });
+      return firstPartConfirmed
+        ? {
+            posted: true,
+            postedParts,
+            requestedParts: parts.length,
+            incomplete: true,
+            error: error.message,
+          }
+        : { posted: false, error: error.message };
+    } finally {
+      await this.ensureComposerClosed(page, ctx).catch(() => {});
+    }
+  }
+
+  async openReplyComposer(page, ctx, statusUrl = null) {
+    if (!this.isActive()) return false;
+    if (statusUrl) {
+      const statusId = String(statusUrl).match(/\/status\/(\d+)/)?.[1];
+      if (statusId) {
+        const clicked = await page.evaluate((id) => {
+          for (const article of document.querySelectorAll('article[data-testid="tweet"]')) {
+            const ownsStatus = Array.from(article.querySelectorAll('a[href*="/status/"]')).some(
+              (link) => (link.getAttribute('href') || '').includes(`/status/${id}`)
+            );
+            if (!ownsStatus) continue;
+            const button = article.querySelector('button[data-testid="reply"]');
+            if (!button) return false;
+            button.click();
+            return true;
+          }
+          return false;
+        }, statusId).catch(() => false);
+        if (!clicked) return false;
+        await this.randomDelay(800, 1200);
+        return this.isActive();
+      }
+    }
     const replyButton = await page.$(SELECTORS.reply);
     if (!replyButton) return false;
     await replyButton.click();
@@ -981,20 +1357,31 @@ class EngagementBot {
     const accountName = ctx.accountName;
     const interactions = ctx.interactions;
 
-    logger.info(`Processing account: ${accountName}`);
+    // Proxy assigned for this browser session
+    const proxyUrl = accountProfile.proxyUrl || null;
+
+    logger.info(`Processing account: ${accountName}${proxyUrl ? ` [proxy: ${proxyUrl.replace(/:[^:@]+@/, ':***@')}]` : ''}`);
 
     // Daily cap disabled by code: bot no longer stops by maxPerDay.
 
-    const browserManager = new BrowserManager(this.config);
+    const browserConfig = proxyUrl
+      ? { ...this.config, browser: { ...this.config.browser, proxy: proxyUrl } }
+      : this.config;
+
+    const browserManager = new BrowserManager(browserConfig);
     await browserManager.launch();
     const page = await browserManager.newPage();
     this.setupPageDialogs(page, ctx);
 
     try {
-      const loggedIn = await this.auth.login(page, accountName);
+      const loggedIn = await this.auth.login(page, accountName, {
+        mode: proxyUrl ? 'health_check' : 'terminal',
+        credentials: accountProfile.credentials || null,
+        useStoredCredentials: !proxyUrl,
+      });
       if (!loggedIn) {
         logger.error(`Login failed: ${accountName}`);
-        return;
+        return { success: false, reason: 'login_failed' };
       }
 
       await this.db.logActivity({
@@ -1005,6 +1392,20 @@ class EngagementBot {
       });
 
       await this.randomDelay(3000, 5000);
+
+      if (accountProfile.publishing?.enabled) {
+        logger.info(
+          `[AUTO_POST][${accountName}] Enabled for this run; initialDelay=${JSON.stringify(accountProfile.publishing.initialDelayMinutes || { min: 1, max: 5 })}`
+        );
+        const publicationResult = await this.publishThread(page, accountProfile, ctx);
+        logger.info(
+          `[AUTO_POST][${accountName}] Result: ${JSON.stringify(publicationResult)}`
+        );
+        if (!this.isActive()) return;
+        await this.randomDelay(3000, 7000);
+      } else {
+        logger.info(`[AUTO_POST][${accountName}] Disabled for this run`);
+      }
 
       let interactionsThisRun = 0;
       const keywordsPerRun = interactions.keywordsPerRun || 6;
@@ -1100,6 +1501,7 @@ class EngagementBot {
       }
 
       logger.info(`Done ${accountName}: ${interactionsThisRun} interactions this run`);
+      return { success: true, interactions: interactionsThisRun };
     } catch (error) {
       logger.error(`Error processing ${accountName}: ${error.message}`, { stack: error.stack });
       await this.db.logActivity({
@@ -1109,12 +1511,13 @@ class EngagementBot {
         success: false,
         errorMessage: error.message,
       });
+      return { success: false, reason: error.code || error.message };
     } finally {
       await browserManager.close();
     }
   }
 
-  async runParallelAccounts(profiles, maxConcurrent) {
+  async runParallelAccounts(profiles, maxConcurrent, proxyPool = null) {
     const queue = [...profiles];
     const concurrency = Math.min(maxConcurrent || 2, queue.length);
 
@@ -1124,6 +1527,17 @@ class EngagementBot {
       while (this.isRunning) {
         const profile = queue.shift();
         if (!profile) break;
+
+        // Assign proxy from pool if available
+        let assignedProxy = null;
+        if (proxyPool?.enabled) {
+          assignedProxy = await proxyPool.getForAccount(profile.name);
+          if (assignedProxy) {
+            profile.proxyUrl = assignedProxy.url;
+          }
+        }
+
+        await this.db.setAccountProxyUsage?.(profile.name, assignedProxy, true);
 
         const workerBot = new EngagementBot(
           null,
@@ -1135,10 +1549,30 @@ class EngagementBot {
           this
         );
         try {
-          await workerBot.processAccount(profile);
+          const result = await workerBot.processAccount(profile);
+          // Mark proxy success
+          if (result?.success && assignedProxy && proxyPool) {
+            proxyPool.db?.updateProxyStatus(assignedProxy._id.toString(), 'active').catch(() => {});
+          } else if (
+            assignedProxy &&
+            proxyPool &&
+            /proxy|connect|ECONNRESET|tunnel|ERR_TIMED_OUT/i.test(String(result?.reason || ''))
+          ) {
+            await proxyPool.markDeadAndGetNext(
+              profile.name,
+              assignedProxy._id,
+              String(result?.reason || 'proxy failure')
+            );
+          }
         } catch (error) {
           const src = profile._source ? `[${profile._source}] ` : '';
           logger.error(`${src}${profile.name}: account run failed: ${error.message}`);
+          // Mark proxy dead if error looks like network/proxy issue
+          if (assignedProxy && proxyPool && /proxy|connect|ECONNRESET|tunnel/i.test(error.message)) {
+            proxyPool.markDeadAndGetNext(profile.name, assignedProxy._id, error.message).catch(() => {});
+          }
+        } finally {
+          await this.db.setAccountProxyUsage?.(profile.name, assignedProxy, false).catch(() => {});
         }
       }
     };
